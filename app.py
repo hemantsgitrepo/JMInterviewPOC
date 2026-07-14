@@ -1,6 +1,8 @@
 """Jobmanch.ai AI Interview Caller — POC backend."""
 
 import asyncio
+import base64
+import hmac
 import io
 import os
 import re
@@ -20,6 +22,39 @@ import store
 from call import handle_media_ws
 
 app = FastAPI(title="Jobmanch.ai Interview Caller POC")
+
+
+class BasicAuthMiddleware:
+    """Gates the UI and /api/* behind a shared username/password. Twilio's webhooks and
+    the media WebSocket are exempt — Twilio's servers can't answer a login prompt, so
+    gating those would break real calls. Auth is skipped entirely if BASIC_AUTH_USER
+    isn't set, so local dev (uvicorn, loopback.py, test scripts) keeps working unchanged."""
+
+    def __init__(self, app):
+        self.app = app
+        self.user = os.environ.get("BASIC_AUTH_USER", "")
+        self.password = os.environ.get("BASIC_AUTH_PASS", "")
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or not self.user or scope["path"].startswith("/twilio/"):
+            return await self.app(scope, receive, send)
+        headers = dict(scope["headers"])
+        auth = headers.get(b"authorization", b"").decode(errors="ignore")
+        if auth.startswith("Basic "):
+            try:
+                u, _, p = base64.b64decode(auth[6:]).decode().partition(":")
+            except Exception:
+                u, p = "", ""
+            if hmac.compare_digest(u, self.user) and hmac.compare_digest(p, self.password):
+                return await self.app(scope, receive, send)
+        response = Response(
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="JMInterviewPOC"'},
+        )
+        return await response(scope, receive, send)
+
+
+app.add_middleware(BasicAuthMiddleware)
 
 E164 = re.compile(r"^\+[1-9]\d{6,14}$")
 
