@@ -23,7 +23,7 @@
     min-height: 100vh;
   }
   header {
-    position: sticky; top: 0; z-index: 10; height: 64px;
+    position: sticky; top: 0; z-index: 10; min-height: 64px;
     display: flex; align-items: center; gap: 16px; padding: 0 32px;
     background: rgba(15, 27, 46, 0.85); backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--border);
@@ -39,7 +39,7 @@
   @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
   .card {
     background: var(--bg-card); border: 1px solid var(--border);
-    border-radius: var(--radius-card); padding: 24px;
+    border-radius: var(--radius-card); padding: 24px; min-width: 0;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
     transition: border-color 300ms ease-in-out;
   }
@@ -50,7 +50,7 @@
     letter-spacing: 0.06em; color: var(--text-2); margin: 16px 0 6px;
   }
   input, textarea {
-    width: 100%; background: var(--bg-input); color: var(--text);
+    width: 100%; min-width: 0; background: var(--bg-input); color: var(--text);
     border: 1px solid var(--border); border-radius: var(--radius);
     padding: 12px 16px; font: inherit; resize: vertical;
     transition: border-color 150ms ease-out, box-shadow 150ms ease-out;
@@ -81,6 +81,8 @@
   .btn-danger:hover:not(:disabled) { background: rgba(239, 68, 68, 0.1); }
   .btn-small { padding: 6px 14px; font-size: 12px; }
   .actions { display: flex; gap: 16px; align-items: center; margin-top: 24px; flex-wrap: wrap; }
+  .btn-push-right { margin-left: auto; }
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .hint { font-size: 12px; color: var(--text-2); margin-top: 8px; }
   .status-card { margin-top: 24px; }
   table { width: 100%; border-collapse: collapse; margin-top: 8px; }
@@ -133,6 +135,24 @@
   .ai-usage { background: rgba(0, 217, 255, 0.05); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; margin-bottom: 16px; font-size: 13px; }
   .ai-usage .k { font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-2); margin-bottom: 4px; }
   .ai-usage .v { color: var(--cyan); font-weight: 500; }
+
+  @media (max-width: 640px) {
+    header { padding: 0 16px; gap: 10px; }
+    .logo { height: 30px; margin-right: 4px; }
+    .wordmark { font-size: 16px; }
+    .app-label { display: none; }
+    main { padding: 20px 12px 48px; }
+    .card { padding: 16px; }
+    .btn { padding: 12px 20px; }
+    .btn-secondary, .btn-danger { padding: 10px 18px; }
+    .actions { flex-direction: column; align-items: stretch; }
+    .actions .btn { width: 100%; justify-content: center; }
+    .btn-push-right { margin-left: 0; }
+    .detail-grid { grid-template-columns: 1fr; }
+    th, td { padding: 8px; font-size: 13px; }
+    dialog { padding: 16px; }
+    .toast { left: 12px; right: 12px; max-width: none; bottom: 16px; }
+  }
 </style>
 </head>
 <body>
@@ -165,10 +185,12 @@
       </div>
 
       <label>Interview Questions</label>
-      <table class="q-table" aria-label="Interview questions">
-        <thead><tr><th>#</th><th>Question</th><th>Actions</th></tr></thead>
-        <tbody id="q-rows"></tbody>
-      </table>
+      <div class="table-wrap">
+        <table class="q-table" aria-label="Interview questions">
+          <thead><tr><th>#</th><th>Question</th><th>Actions</th></tr></thead>
+          <tbody id="q-rows"></tbody>
+        </table>
+      </div>
       <div class="actions" style="margin-top:12px">
         <button class="btn btn-secondary btn-small" id="add-question">+ Add Question</button>
       </div>
@@ -183,7 +205,7 @@
 
       <div class="actions">
         <button class="btn btn-secondary" id="save-config">Save Config</button>
-        <button class="btn btn-danger btn-small" id="reset-all" style="margin-left:auto">Reset All</button>
+        <button class="btn btn-danger btn-small btn-push-right" id="reset-all">Reset All</button>
       </div>
     </section>
 
@@ -203,10 +225,12 @@
 
   <section class="card status-card" aria-labelledby="status-h">
     <h2 id="status-h">Call Status</h2>
-    <table aria-label="Candidate call statuses">
-      <thead><tr><th>Candidate</th><th>Phone</th><th>Status</th><th>Duration</th><th>Transcript</th><th>Actions</th></tr></thead>
-      <tbody id="rows"><tr><td colspan="6" class="empty">No candidates yet — save a list above.</td></tr></tbody>
-    </table>
+    <div class="table-wrap">
+      <table aria-label="Candidate call statuses">
+        <thead><tr><th>Candidate</th><th>Phone</th><th>Status</th><th>Duration</th><th>Transcript</th><th>Actions</th></tr></thead>
+        <tbody id="rows"><tr><td colspan="6" class="empty">No candidates yet — save a list above.</td></tr></tbody>
+      </table>
+    </div>
   </section>
 </main>
 
@@ -489,6 +513,7 @@ async function showInfo(id) {
         : `<div class="hint" style="margin:0">Recording not available${d.status === "completed" || d.status === "failed" ? " (may still be processing on Twilio's side)" : " yet"}.</div>`}
 
       <div class="section-title">Token Usage &amp; Cost</div>
+      <div class="table-wrap">
       <table>
         <thead><tr><th>Model</th><th>Usage</th><th>Cost</th></tr></thead>
         <tbody>
@@ -499,6 +524,7 @@ async function showInfo(id) {
           ${qGen ? `<tr><td>Question Generation <span class="hint" style="margin:0">(one-time, shared)</span></td><td style="color:var(--text-2)">${qGen.prompt_tokens || 0} prompt / ${qGen.completion_tokens || 0} completion tokens</td><td>${fmtMoney(qGen.cost)}</td></tr>` : ""}
         </tbody>
       </table>
+      </div>
       <div class="cost-total">
         Total AI tokens: ${totalTokens.toLocaleString()}
         <div style="margin-top:4px">Total known cost: ${fmtMoney(d.total_known_cost)}</div>
