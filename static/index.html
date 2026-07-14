@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jobmanch.ai — AI Interview Caller</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0F1B2E; --bg-card: #1A2540; --bg-input: #2D3E5F;
+    --cyan: #00D9FF; --blue: #0081FF; --purple: #7C3AED;
+    --green: #10B981; --orange: #F59E0B; --red: #EF4444;
+    --text: #FFFFFF; --text-2: #64748B;
+    --border: rgba(0, 217, 255, 0.2);
+    --radius: 8px; --radius-card: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: linear-gradient(160deg, #0F1B2E 0%, #16293b 100%);
+    color: var(--text);
+    font: 400 14px/1.6 Inter, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh;
+  }
+  header {
+    position: sticky; top: 0; z-index: 10; height: 64px;
+    display: flex; align-items: center; gap: 16px; padding: 0 32px;
+    background: rgba(15, 27, 46, 0.85); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border);
+  }
+  .wordmark { font-size: 20px; font-weight: 700; letter-spacing: 0.02em; }
+  .wordmark span { color: var(--cyan); }
+  .app-label {
+    font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--text-2); border-left: 1px solid #475569; padding-left: 16px;
+  }
+  main { max-width: 1200px; margin: 0 auto; padding: 32px 24px 64px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius-card); padding: 24px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    transition: border-color 300ms ease-in-out;
+  }
+  .card:hover { border-color: rgba(0, 217, 255, 0.4); }
+  .card h2 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+  label {
+    display: block; font-size: 12px; font-weight: 500; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--text-2); margin: 16px 0 6px;
+  }
+  input, textarea {
+    width: 100%; background: var(--bg-input); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 12px 16px; font: inherit; resize: vertical;
+    transition: border-color 150ms ease-out, box-shadow 150ms ease-out;
+  }
+  input::placeholder, textarea::placeholder { color: var(--text-2); }
+  input:focus, textarea:focus {
+    outline: none; border-color: var(--cyan);
+    box-shadow: 0 0 0 3px rgba(0, 217, 255, 0.1);
+  }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+    border: none; border-radius: var(--radius); padding: 12px 32px;
+    font: 600 14px Inter, sans-serif; text-transform: uppercase; letter-spacing: 0.5px;
+    transition: transform 150ms ease-out, box-shadow 150ms ease-out, background 150ms ease-out;
+  }
+  .btn:active { transform: scale(0.98); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+  .btn-primary {
+    background: linear-gradient(90deg, var(--cyan), var(--purple));
+    color: var(--bg); box-shadow: 0 4px 12px rgba(0, 217, 255, 0.3);
+  }
+  .btn-primary:hover:not(:disabled) { transform: scale(1.05); box-shadow: 0 6px 18px rgba(0, 217, 255, 0.45); }
+  .btn-secondary { background: transparent; border: 2px solid var(--cyan); color: var(--cyan); padding: 10px 30px; }
+  .btn-secondary:hover:not(:disabled) { background: rgba(0, 217, 255, 0.1); }
+  .btn-ghost { background: transparent; color: var(--text-2); padding: 6px 12px; text-transform: none; letter-spacing: 0; }
+  .btn-ghost:hover { color: var(--cyan); }
+  .btn-danger { background: transparent; border: 2px solid var(--red); color: var(--red); padding: 10px 30px; }
+  .btn-danger:hover:not(:disabled) { background: rgba(239, 68, 68, 0.1); }
+  .btn-small { padding: 6px 14px; font-size: 12px; }
+  .actions { display: flex; gap: 16px; align-items: center; margin-top: 24px; flex-wrap: wrap; }
+  .hint { font-size: 12px; color: var(--text-2); margin-top: 8px; }
+  .status-card { margin-top: 24px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th {
+    text-align: left; font-size: 12px; font-weight: 500; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--text-2); padding: 8px 12px;
+    border-bottom: 1px solid #475569;
+  }
+  td { padding: 12px; border-bottom: 1px solid rgba(0, 217, 255, 0.1); font-size: 14px; }
+  tr.current td { background: rgba(0, 217, 255, 0.05); }
+  .badge {
+    display: inline-block; padding: 4px 12px; border-radius: 20px;
+    font-size: 12px; font-weight: 600; color: #fff; white-space: nowrap;
+  }
+  .badge.pending { background: var(--text-2); }
+  .badge.calling { background: var(--blue); animation: pulse 1.2s ease-in-out infinite; }
+  .badge.in_progress { background: linear-gradient(90deg, var(--cyan), var(--purple)); }
+  .badge.completed { background: var(--green); }
+  .badge.no_answer { background: var(--orange); }
+  .badge.failed { background: var(--red); }
+  @keyframes pulse { 50% { opacity: 0.55; } }
+  .toast {
+    position: fixed; bottom: 24px; right: 24px; z-index: 30;
+    background: var(--bg-input); border: 1px solid var(--border); color: var(--text);
+    border-radius: var(--radius); padding: 12px 16px; max-width: 380px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4); opacity: 0; transition: opacity 300ms;
+  }
+  .toast.show { opacity: 1; }
+  .toast.err { border-color: var(--red); }
+  dialog {
+    background: var(--bg-card); color: var(--text); border: 1px solid var(--border);
+    border-radius: var(--radius-card); padding: 24px; max-width: 640px; width: 90vw;
+    max-height: 80vh;
+  }
+  dialog::backdrop { background: rgba(15, 27, 46, 0.7); backdrop-filter: blur(2px); }
+  .turn { margin: 12px 0; }
+  .turn .who { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+  .turn.agent .who { color: var(--cyan); }
+  .turn.candidate .who { color: var(--green); }
+  .empty { color: var(--text-2); padding: 24px 12px; text-align: center; }
+  .q-table td, .q-table th { vertical-align: top; }
+  .q-table td:first-child { color: var(--text-2); width: 32px; }
+  .q-table td:last-child { white-space: nowrap; width: 1%; }
+  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+  .detail-grid .k { font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-2); margin-bottom: 2px; }
+  .section-title { font-size: 14px; font-weight: 600; margin: 20px 0 8px; }
+  .cost-total { text-align: right; margin-top: 12px; font-weight: 600; }
+  audio { width: 100%; }
+  .logo { height: 40px; width: auto; margin-right: 12px; }
+  .ai-usage { background: rgba(0, 217, 255, 0.05); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; margin-bottom: 16px; font-size: 13px; }
+  .ai-usage .k { font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-2); margin-bottom: 4px; }
+  .ai-usage .v { color: var(--cyan); font-weight: 500; }
+</style>
+</head>
+<body>
+<header>
+  <svg class="logo" viewBox="0 0 400.31 405.34" xmlns="http://www.w3.org/2000/svg">
+    <defs><style>.logo-blue{fill:#556FFE;}.logo-dark{fill:#141F37;}</style></defs>
+    <g><rect x="317.87" y="78.46" class="logo-blue" width="82.44" height="326.87"/><polygon class="logo-blue" points="264.42,265.51 223.7,321.57 213.44,335.67 162.51,265.55 162.51,265.51 145.48,242.1 145.48,101.87 213.44,195.39 264.37,265.46"/><polygon class="logo-blue" points="400.31,78.46 389.23,93.71 317.88,191.9 264.38,265.5 223.67,321.56 213.45,335.67 162.48,265.55 171.82,252.72 201.91,211.23 213.45,195.38 298.41,78.46"/><path class="logo-blue" d="M87.13,98.45c-16.71,0-31.67-7.83-41.28-20.01v226.48c0,9.94-8.07,17.97-17.93,17.97H0v82.45h27.92c55.35,0,100.38-45.03,100.38-100.42V78.6C118.64,90.67,103.8,98.45,87.13,98.45z M111.3,245.66l-22.9,40.8l-25.39-41.53c-0.49-0.86-0.65-1.87-0.49-2.81l24.82-124.22l24.37,125.08C111.91,243.87,111.79,244.84,111.3,245.66z"/><circle class="logo-blue" cx="87.13" cy="41.22" r="41.22"/></g>
+  </svg>
+  <div class="wordmark">Jobmanch<span>.ai</span></div>
+  <div class="app-label">AI Interview Caller</div>
+</header>
+
+<main>
+  <div class="grid">
+    <section class="card" aria-labelledby="setup-h">
+      <h2 id="setup-h">Interview Setup</h2>
+      <label for="opening">Opening line</label>
+      <textarea id="opening" rows="3" placeholder="Hello [Candidate Name], this is an automated interview…"></textarea>
+      <label for="company">Company name</label>
+      <input id="company" placeholder="Acme Corp">
+      <label for="role">Role name</label>
+      <input id="role" placeholder="Software Engineer">
+
+      <label for="jd-text">Job description (optional — for AI question generation)</label>
+      <textarea id="jd-text" rows="5" placeholder="Paste the job description here (supports any formatted text)…"></textarea>
+      <input type="file" id="jd-file" accept="application/pdf" style="display:none">
+      <div class="actions" style="margin-top:8px">
+        <button class="btn btn-secondary btn-small" id="jd-upload-btn">📄 Upload PDF</button>
+        <button class="btn btn-primary btn-small" id="generate-questions" disabled>✨ Generate Questions with AI (max 8)</button>
+      </div>
+
+      <label>Interview Questions</label>
+      <table class="q-table" aria-label="Interview questions">
+        <thead><tr><th>#</th><th>Question</th><th>Actions</th></tr></thead>
+        <tbody id="q-rows"></tbody>
+      </table>
+      <div class="actions" style="margin-top:12px">
+        <button class="btn btn-secondary btn-small" id="add-question">+ Add Question</button>
+      </div>
+
+      <label for="endline">End call line</label>
+      <textarea id="endline" rows="2" placeholder="Thank you for your time today…"></textarea>
+
+      <div id="ai-usage-display" class="ai-usage" style="display:none">
+        <div class="k">AI Usage Information</div>
+        <div id="ai-usage-content"></div>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-secondary" id="save-config">Save Config</button>
+        <button class="btn btn-danger btn-small" id="reset-all" style="margin-left:auto">Reset All</button>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="cand-h">
+      <h2 id="cand-h">Candidates</h2>
+      <label for="cand-input">Paste list — <code>Name, +14155551234</code> per line</label>
+      <textarea id="cand-input" rows="8" placeholder="Sarah Johnson, +14155551234&#10;Michael Chen, +14155555678&#10;Priya Patel, +14155559012"></textarea>
+      <div class="hint">Phone numbers must be E.164 (+ country code). Only call consenting test numbers — calls are recorded and the AI discloses it.</div>
+
+      <div class="actions">
+        <button class="btn btn-secondary" id="save-candidates">Save Candidates</button>
+        <button class="btn btn-primary" id="start">Start Calling</button>
+        <button class="btn btn-danger" id="end-call" style="display:none">End Call</button>
+      </div>
+    </section>
+  </div>
+
+  <section class="card status-card" aria-labelledby="status-h">
+    <h2 id="status-h">Call Status</h2>
+    <table aria-label="Candidate call statuses">
+      <thead><tr><th>Candidate</th><th>Phone</th><th>Status</th><th>Duration</th><th>Transcript</th><th>Actions</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="6" class="empty">No candidates yet — save a list above.</td></tr></tbody>
+    </table>
+  </section>
+</main>
+
+<dialog id="modal">
+  <h2 id="modal-title" style="font-size:20px;font-weight:600;margin-bottom:8px"></h2>
+  <div id="modal-body" style="overflow-y:auto"></div>
+  <div class="actions"><button class="btn btn-secondary" onclick="modal.close()">Close</button></div>
+</dialog>
+
+<dialog id="question-modal">
+  <h2 id="qm-title" style="font-size:18px;font-weight:600;margin-bottom:8px">Add Question</h2>
+  <textarea id="qm-text" rows="3" placeholder="e.g. Tell me about a time you debugged a tricky production issue."></textarea>
+  <div class="actions">
+    <button class="btn btn-secondary" onclick="questionModal.close()">Cancel</button>
+    <button class="btn btn-primary" id="qm-save">Save</button>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const toastEl = $("toast");
+let toastTimer;
+function toast(msg, err = false) {
+  toastEl.textContent = msg;
+  toastEl.className = "toast show" + (err ? " err" : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove("show"), 4000);
+}
+async function api(path, opts) {
+  const r = await fetch(path, opts && { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(opts) });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || r.statusText);
+  return data;
+}
+
+// ---- config ----
+let questionsList = [];
+
+async function loadConfig() {
+  const c = await api("/api/config");
+  $("opening").value = c.opening_line;
+  $("company").value = c.company_name;
+  $("role").value = c.role_name || "";
+  questionsList = c.questions || [];
+  renderQuestions();
+  $("endline").value = c.end_call_line;
+  showAIUsage(c.ai_usage);
+}
+function showAIUsage(usage) {
+  const display = $("ai-usage-display");
+  const content = $("ai-usage-content");
+  if (!usage || (!usage.jd_parsing_usage && !usage.question_generation_usage)) {
+    display.style.display = "none";
+    return;
+  }
+  display.style.display = "block";
+  let html = "";
+  if (usage.jd_parsing_usage) {
+    const p = usage.jd_parsing_usage;
+    html += `<div><span class="k">JD Parsing</span> <span class="v">${p.prompt_tokens || 0} prompt / ${p.completion_tokens || 0} completion tokens · $${(p.cost || 0).toFixed(6)}</span></div>`;
+  }
+  if (usage.question_generation_usage) {
+    const g = usage.question_generation_usage;
+    html += `<div><span class="k">Question Generation</span> <span class="v">${g.prompt_tokens || 0} prompt / ${g.completion_tokens || 0} completion tokens · $${(g.cost || 0).toFixed(6)}</span></div>`;
+  }
+  content.innerHTML = html || "<div style=\"color: var(--text-2);\">No AI usage tracked yet</div>";
+}
+$("save-config").onclick = async () => {
+  try {
+    await api("/api/config", {
+      opening_line: $("opening").value, company_name: $("company").value,
+      role_name: $("role").value,
+      questions: questionsList,
+      end_call_line: $("endline").value,
+    });
+    toast("Interview config saved");
+  } catch (e) { toast(e.message, true); }
+};
+$("reset-all").onclick = async () => {
+  if (!confirm("Reset company info, questions, and all candidates? This cannot be undone.")) return;
+  try {
+    await api("/api/session/reset", {});
+    $("company").value = "Acme Corp";
+    $("role").value = "Software Engineer";
+    $("opening").value = "Hello [Candidate Name], this is an interview call from JobManch AI on behalf of [Company Name] for the [Role Name] role. This call may be recorded for quality and training purposes. Are you ready to begin?";
+    $("endline").value = "Thank you for your time today. Our team will review and be in touch. Goodbye!";
+    $("jd-text").value = "";
+    $("generate-questions").disabled = true;
+    questionsList = [];
+    renderQuestions();
+    $("ai-usage-display").style.display = "none";
+    toast("All data cleared");
+  } catch (e) { toast(e.message, true); }
+};
+
+// ---- questions table (Add / Edit / Delete) ----
+const questionModal = $("question-modal");
+let editingIndex = null;
+
+function renderQuestions() {
+  $("q-rows").innerHTML = questionsList.length ? questionsList.map((q, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td>${esc(q)}</td>
+      <td>
+        <button class="btn btn-ghost btn-small" onclick="openQuestionModal(${i})">Edit</button>
+        <button class="btn btn-ghost btn-small" style="color:var(--red)" onclick="deleteQuestion(${i})">Delete</button>
+      </td>
+    </tr>`).join("") : `<tr><td colspan="3" class="empty">No questions yet — add one manually or generate with AI.</td></tr>`;
+}
+function openQuestionModal(index) {
+  editingIndex = index;
+  $("qm-title").textContent = index === null ? "Add Question" : "Edit Question";
+  $("qm-text").value = index === null ? "" : questionsList[index];
+  questionModal.showModal();
+}
+function deleteQuestion(i) {
+  questionsList.splice(i, 1);
+  renderQuestions();
+}
+$("add-question").onclick = () => openQuestionModal(null);
+$("qm-save").onclick = () => {
+  const text = $("qm-text").value.trim();
+  if (!text) { toast("Question can't be empty", true); return; }
+  if (editingIndex === null) questionsList.push(text);
+  else questionsList[editingIndex] = text;
+  questionModal.close();
+  renderQuestions();
+};
+
+// ---- AI question generator ----
+$("jd-text").addEventListener("input", () => {
+  $("generate-questions").disabled = !$("jd-text").value.trim();
+});
+$("jd-upload-btn").onclick = () => $("jd-file").click();
+$("jd-file").onchange = async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  if (file.type !== "application/pdf") {
+    toast("Only PDF files are supported for upload — please paste the JD text instead.", true);
+    return;
+  }
+  const formData = new FormData();
+  formData.append("file", file);
+  const btn = $("jd-upload-btn");
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Reading PDF…";
+  try {
+    const r = await fetch("/api/questions/generate-from-pdf", { method: "POST", body: formData });
+    if (!r.ok) {
+      const err = await r.json();
+      throw new Error(err.detail || "Failed to read PDF");
+    }
+    const data = await r.json();
+    questionsList = questionsList.concat(data.questions);
+    renderQuestions();
+    toast(`Added ${data.questions.length} AI-generated question${data.questions.length === 1 ? "" : "s"} from PDF`);
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+};
+$("generate-questions").onclick = async () => {
+  const jd = $("jd-text").value.trim();
+  if (!jd) return;
+  const btn = $("generate-questions");
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Generating…";
+  try {
+    const r = await api("/api/questions/generate", { jd_text: jd });
+    questionsList = questionsList.concat(r.questions);
+    renderQuestions();
+    const c = await api("/api/config");
+    showAIUsage(c.ai_usage);
+    toast(`Added ${r.questions.length} AI-generated question${r.questions.length === 1 ? "" : "s"}`);
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    btn.disabled = !$("jd-text").value.trim();
+    btn.textContent = original;
+  }
+};
+
+// ---- candidates ----
+$("save-candidates").onclick = async () => {
+  const candidates = $("cand-input").value.split("\n").map(l => l.trim()).filter(Boolean).map(l => {
+    const i = l.lastIndexOf(",");
+    return { name: l.slice(0, i).trim(), phone: (i < 0 ? "" : l.slice(i + 1)).trim() };
+  });
+  try {
+    const r = await api("/api/candidates", { candidates });
+    toast(`Saved ${r.count} candidate${r.count === 1 ? "" : "s"}`);
+    poll();
+  } catch (e) { toast(e.message, true); }
+};
+
+// ---- session ----
+$("start").onclick = async () => {
+  try { await api("/api/session/start", {}); toast("Calling session started"); poll(); }
+  catch (e) { toast(e.message, true); }
+};
+$("end-call").onclick = async () => {
+  try { await api("/api/session/end_call", {}); toast("Call ended"); poll(); }
+  catch (e) { toast(e.message, true); }
+};
+const LABELS = { pending: "Pending", calling: "Calling", in_progress: "In Progress", completed: "Completed", no_answer: "No Answer", failed: "Failed" };
+function dur(c) {
+  if (!c.started_at) return "—";
+  const s = Math.round((c.ended_at || Date.now() / 1000) - c.started_at);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+async function poll() {
+  try {
+    const s = await api("/api/session");
+    $("start").disabled = s.running;
+    $("end-call").style.display = s.running ? "inline-flex" : "none";
+    const rows = $("rows");
+    if (!s.candidates.length) return;
+    rows.innerHTML = s.candidates.map(c => `
+      <tr class="${c.id === s.current_candidate_id ? "current" : ""}">
+        <td>${esc(c.name)}${c.partial ? ' <span style="color:var(--orange);font-size:12px">(partial)</span>' : ""}</td>
+        <td style="color:var(--text-2)">${esc(c.phone)}</td>
+        <td><span class="badge ${c.status}">${LABELS[c.status] || c.status}</span></td>
+        <td style="color:var(--text-2)">${dur(c)}</td>
+        <td>${c.turns ? `<button class="btn btn-ghost btn-small" onclick="showTranscript('${c.id}')">View (${c.turns})</button>` : '<span style="color:var(--text-2)">—</span>'}</td>
+        <td>${c.started_at ? `<button class="btn btn-secondary btn-small" onclick="showInfo('${c.id}')">Info</button>` : '<span style="color:var(--text-2)">—</span>'}</td>
+      </tr>`).join("");
+  } catch (e) { /* server restarting; keep polling */ }
+}
+function esc(t) { return t.replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
+
+const modal = $("modal");
+async function showTranscript(id) {
+  try {
+    const t = await api(`/api/candidates/${id}/transcript`);
+    $("modal-title").textContent = `Transcript — ${t.candidate}`;
+    $("modal-body").innerHTML = t.turns.map(x => `
+      <div class="turn ${x.role}"><div class="who">${x.role === "agent" ? "AI Interviewer" : "Candidate"}</div><div>${esc(x.text)}</div></div>`).join("")
+      || '<div class="empty">No turns captured.</div>';
+    modal.showModal();
+  } catch (e) { toast(e.message, true); }
+}
+
+function fmtMoney(v) { return v == null ? "n/a" : `$${v.toFixed(6)}`; }
+function fmtDateTime(t) { return t ? new Date(t * 1000).toLocaleString() : "—"; }
+async function showInfo(id) {
+  try {
+    const d = await api(`/api/candidates/${id}/details`);
+    const u = d.usage || {};
+    const stt = u.stt || {}, llm = u.llm || {}, tts = u.tts || {};
+    const ai = d.ai_usage || {};
+    const jdParse = ai.jd_parsing_usage;
+    const qGen = ai.question_generation_usage;
+    const totalTokens = (llm.prompt_tokens || 0) + (llm.completion_tokens || 0)
+      + (jdParse ? (jdParse.prompt_tokens || 0) + (jdParse.completion_tokens || 0) : 0)
+      + (qGen ? (qGen.prompt_tokens || 0) + (qGen.completion_tokens || 0) : 0);
+    const durSec = (d.started_at && d.ended_at) ? Math.round(d.ended_at - d.started_at) : null;
+    $("modal-title").textContent = `Call Details — ${esc(d.name)}`;
+    $("modal-body").innerHTML = `
+      <div class="detail-grid">
+        <div><div class="k">Status</div><span class="badge ${d.status}">${LABELS[d.status] || d.status}</span></div>
+        <div><div class="k">Duration</div>${durSec != null ? `${Math.floor(durSec / 60)}:${String(durSec % 60).padStart(2, "0")}` : "—"}</div>
+        <div><div class="k">Started</div>${fmtDateTime(d.started_at)}</div>
+        <div><div class="k">Ended</div>${fmtDateTime(d.ended_at)}</div>
+        <div><div class="k">Answered by</div>${esc(d.answered_by || "—")}</div>
+        <div><div class="k">Partial call</div>${d.partial ? "Yes" : "No"}</div>
+      </div>
+
+      <div class="section-title">Call Recording</div>
+      ${d.recording_available
+        ? `<audio controls src="/api/candidates/${id}/recording"></audio>
+           <a class="btn btn-ghost btn-small" href="/api/candidates/${id}/recording" download style="margin-top:4px">Download MP3</a>`
+        : `<div class="hint" style="margin:0">Recording not available${d.status === "completed" || d.status === "failed" ? " (may still be processing on Twilio's side)" : " yet"}.</div>`}
+
+      <div class="section-title">Token Usage &amp; Cost</div>
+      <table>
+        <thead><tr><th>Model</th><th>Usage</th><th>Cost</th></tr></thead>
+        <tbody>
+          <tr><td>Whisper (STT)</td><td style="color:var(--text-2)">${(stt.seconds || 0).toFixed(1)}s audio · ${stt.calls || 0} call(s)</td><td>${fmtMoney(stt.cost_known ? stt.cost : null)}</td></tr>
+          <tr><td>Gemini 2.5 Flash (LLM)</td><td style="color:var(--text-2)">${llm.prompt_tokens || 0} prompt / ${llm.completion_tokens || 0} completion tokens</td><td>${fmtMoney(llm.cost_known ? llm.cost : null)}</td></tr>
+          <tr><td>Cartesia Sonic 3.5 (TTS)</td><td style="color:var(--text-2)">${tts.characters || 0} characters · ${tts.calls || 0} call(s)</td><td style="color:var(--text-2)">not reported by API</td></tr>
+          ${jdParse ? `<tr><td>JD Parsing <span class="hint" style="margin:0">(one-time, shared)</span></td><td style="color:var(--text-2)">${jdParse.prompt_tokens || 0} prompt / ${jdParse.completion_tokens || 0} completion tokens</td><td>${fmtMoney(jdParse.cost)}</td></tr>` : ""}
+          ${qGen ? `<tr><td>Question Generation <span class="hint" style="margin:0">(one-time, shared)</span></td><td style="color:var(--text-2)">${qGen.prompt_tokens || 0} prompt / ${qGen.completion_tokens || 0} completion tokens</td><td>${fmtMoney(qGen.cost)}</td></tr>` : ""}
+        </tbody>
+      </table>
+      <div class="cost-total">
+        Total AI tokens: ${totalTokens.toLocaleString()}
+        <div style="margin-top:4px">Total known cost: ${fmtMoney(d.total_known_cost)}</div>
+        <div class="hint" style="text-align:right;margin-top:2px">Excludes Cartesia TTS cost (not returned by its API). JD Parsing / Question Generation are one-time, shared across all candidates — not per-call costs.</div>
+      </div>
+    `;
+    modal.showModal();
+  } catch (e) { toast(e.message, true); }
+}
+
+loadConfig().catch(() => {});
+poll();
+setInterval(poll, 2000);
+</script>
+</body>
+</html>

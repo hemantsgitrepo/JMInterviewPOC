@@ -1,0 +1,10 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+
+# Generated at runtime — real call data, not source
+transcripts/*.json
+recordings/*.mp3

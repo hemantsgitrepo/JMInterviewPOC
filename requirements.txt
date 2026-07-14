@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+twilio
+httpx
+python-dotenv
+python-multipart
+pypdf
+audioop-lts; python_version >= "3.13"
