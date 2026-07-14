@@ -79,7 +79,7 @@ class CallSession:
         self.state = "SPEAKING"
         self.endpointer = Endpointer()
         self.barge = BargeInDetector()
-        self.question_index = 0
+        self.question_index = -1  # -1 = no question asked yet (see status_line)
         self.followups = 0
         self.history: list[dict] = []
         self.silent_frames = 0
@@ -370,6 +370,8 @@ class CallSession:
 
     def status_line(self) -> str:
         qs = self.config["questions"]
+        if self.question_index < 0:
+            return "\n\n[STATUS] No interview question has been asked yet. Ask the FIRST question now."
         i = min(self.question_index, len(qs) - 1)
         note = " This is the LAST question." if i == len(qs) - 1 else ""
         if self.followups >= MAX_FOLLOWUPS:
