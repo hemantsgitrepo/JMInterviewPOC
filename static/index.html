@@ -300,14 +300,17 @@ function showAIUsage(usage) {
   }
   content.innerHTML = html || "<div style=\"color: var(--text-2);\">No AI usage tracked yet</div>";
 }
+async function saveConfig() {
+  await api("/api/config", {
+    opening_line: $("opening").value, company_name: $("company").value,
+    role_name: $("role").value,
+    questions: questionsList,
+    end_call_line: $("endline").value,
+  });
+}
 $("save-config").onclick = async () => {
   try {
-    await api("/api/config", {
-      opening_line: $("opening").value, company_name: $("company").value,
-      role_name: $("role").value,
-      questions: questionsList,
-      end_call_line: $("endline").value,
-    });
+    await saveConfig();
     toast("Interview config saved");
   } catch (e) { toast(e.message, true); }
 };
@@ -422,13 +425,15 @@ $("generate-questions").onclick = async () => {
 };
 
 // ---- candidates ----
-$("save-candidates").onclick = async () => {
-  const candidates = $("cand-input").value.split("\n").map(l => l.trim()).filter(Boolean).map(l => {
+function parseCandidateInput() {
+  return $("cand-input").value.split("\n").map(l => l.trim()).filter(Boolean).map(l => {
     const i = l.lastIndexOf(",");
     return { name: l.slice(0, i).trim(), phone: (i < 0 ? "" : l.slice(i + 1)).trim() };
   });
+}
+$("save-candidates").onclick = async () => {
   try {
-    const r = await api("/api/candidates", { candidates });
+    const r = await api("/api/candidates", { candidates: parseCandidateInput() });
     toast(`Saved ${r.count} candidate${r.count === 1 ? "" : "s"}`);
     poll();
   } catch (e) { toast(e.message, true); }
@@ -436,8 +441,18 @@ $("save-candidates").onclick = async () => {
 
 // ---- session ----
 $("start").onclick = async () => {
-  try { await api("/api/session/start", {}); toast("Calling session started"); poll(); }
-  catch (e) { toast(e.message, true); }
+  try {
+    await saveConfig();
+    // Only auto-save candidates if the box has fresh, unsaved input — it's write-only
+    // (never repopulated after a save/reload), so posting it empty would 400 and block
+    // starting even when candidates are already saved server-side.
+    if ($("cand-input").value.trim()) {
+      await api("/api/candidates", { candidates: parseCandidateInput() });
+    }
+    await api("/api/session/start", {});
+    toast("Calling session started");
+    poll();
+  } catch (e) { toast(e.message, true); }
 };
 $("end-call").onclick = async () => {
   try { await api("/api/session/end_call", {}); toast("Call ended"); poll(); }
