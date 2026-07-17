@@ -1,6 +1,10 @@
-"""Thin OpenRouter wrappers: STT, LLM turn, TTS, JD-based question generation. One retry each."""
+"""Thin OpenRouter wrappers: STT, LLM turn, TTS, JD-based question generation.
+Retries with backoff, longer on 429 (rate limit) since an instant retry almost always
+hits the same limit window."""
 
+import asyncio
 import json
+import logging
 import os
 import re
 
@@ -10,6 +14,8 @@ from dotenv import load_dotenv
 from audio import pcm_to_ulaw, resample
 
 load_dotenv()
+
+logger = logging.getLogger("models")
 
 if os.environ.get("LANGSMITH_TRACING", "").lower() == "true":
     from langsmith import traceable
@@ -21,7 +27,8 @@ else:
             return dargs[0]  # bare @traceable usage
         return lambda f: f  # @traceable(name=..., run_type=...) usage
 
-STT_MODEL = "openai/whisper-large-v3-turbo"
+STT_MODEL = "openai/whisper-large-v3"  # has 2 backing providers (Together + Groq) on
+# OpenRouter, unlike the "-turbo" variant which is Groq-only and hard-fails on Groq 429s
 LLM_MODEL = "google/gemini-2.5-flash"
 CARTESIA_MODEL = "sonic-3.5"
 CARTESIA_VOICE_ID = "79a125e8-cd45-4c13-8a67-188112f4dd22"
@@ -43,11 +50,24 @@ _cartesia = httpx.AsyncClient(
 )
 
 
-async def _retry(fn):
-    try:
-        return await fn()
-    except Exception:
-        return await fn()
+async def _retry(fn, attempts: int = 3):
+    """Retries on failure. A 429 (rate limit) waits with backoff before retrying, since an
+    instant retry almost always lands in the same limit window; other errors retry once."""
+    for i in range(attempts):
+        try:
+            return await fn()
+        except httpx.HTTPStatusError as e:
+            last_exc = e
+            if e.response.status_code != 429 or i == attempts - 1:
+                raise
+            wait = 2 ** (i + 1)  # 2s, 4s, ...
+            logger.warning("429 rate limited (attempt %d/%d), retrying in %ds", i + 1, attempts, wait)
+            await asyncio.sleep(wait)
+        except Exception as e:
+            last_exc = e
+            if i == attempts - 1:
+                raise
+    raise last_exc
 
 
 @traceable(name="stt_transcribe", run_type="tool")
@@ -58,7 +78,10 @@ async def transcribe(wav: bytes) -> dict:
     async def go():
         r = await _client.post(
             "/audio/transcriptions",
-            data={"model": STT_MODEL},
+            # language is pinned: auto-detect on 8kHz telephony audio occasionally lands on
+            # the wrong language and returns a fluent-but-wrong transcript (seen once as Welsh),
+            # which reaches the LLM as a garbled answer.
+            data={"model": STT_MODEL, "language": "en"},
             files={"file": ("utterance.wav", wav, "audio/wav")},
         )
         r.raise_for_status()

@@ -7,6 +7,7 @@ All outbound sends funnel through a single `player` task (one writer -> no ws ra
 import asyncio
 import base64
 import json
+import logging
 import os
 import random
 import re
@@ -18,6 +19,8 @@ import audio
 import models
 import store
 from audio import BargeInDetector, Endpointer, pcm_to_wav, ulaw_to_pcm
+
+logger = logging.getLogger("call")
 
 CHUNK = 4000  # mu-law bytes per outbound ws message (~0.5s)
 STITCH_MAX_BYTES = 30 * 8000  # cap stitched audio at ~30s so a rambler can't grow it unbounded
@@ -440,6 +443,7 @@ class CallSession:
         except asyncio.CancelledError:
             raise  # barge-in cancelled us; handle_barge_in owns cleanup
         except Exception:
+            logger.exception("process_utterance failed for candidate %s", self.cand.get("id"))
             self.cand["status"] = "failed"
             self.ending = True  # protect the closing line from barge-in like any other end-of-call
             try:

@@ -1,7 +1,9 @@
 """Sequential call queue: dial one candidate at a time, advance on terminal status."""
 
 import asyncio
+import logging
 import os
+import re
 import time
 from xml.sax.saxutils import quoteattr
 
@@ -14,7 +16,17 @@ import store
 
 load_dotenv()
 
-PUBLIC_HOST = os.environ.get("PUBLIC_HOST", "")
+logger = logging.getLogger("dialer")
+
+
+def _host_only(raw: str) -> str:
+    """The callback/stream URLs below prepend their own scheme, so a scheme in the env
+    value yields https://https://host/... — which Twilio rejects (error 21609) and the
+    call drops on connect. Accept either form."""
+    return re.sub(r"^\w+://", "", raw.strip()).rstrip("/")
+
+
+PUBLIC_HOST = _host_only(os.environ.get("PUBLIC_HOST", ""))
 FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER", "")
 twilio_client = Client(
     os.environ.get("TWILIO_ACCOUNT_SID", "AC" + "0" * 32),
@@ -28,6 +40,9 @@ VOICEMAIL = {"machine_start", "machine_end_beep", "machine_end_silence", "machin
 
 
 def _create_call(cand: dict):
+    # PUBLIC_HOST going stale (tunnel restarted, new ngrok URL) is the most common reason a
+    # call connects and then drops on us, so make the host we're handing Twilio visible.
+    logger.info("dialing %s — Twilio will call back on %s", cand["phone"], PUBLIC_HOST)
     twiml = (
         f'<Response><Connect><Stream url="wss://{PUBLIC_HOST}/twilio/media">'
         f'<Parameter name="candidate_id" value={quoteattr(cand["id"])}/>'
