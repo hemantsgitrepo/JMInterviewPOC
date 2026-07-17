@@ -5,4 +5,5 @@ httpx
 python-dotenv
 python-multipart
 pypdf
+langsmith
 audioop-lts; python_version >= "3.13"

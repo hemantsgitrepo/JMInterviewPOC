@@ -23,11 +23,21 @@ QUESTIONS = [
     "What programming languages are you most comfortable with?",
     "Tell me about a challenging technical problem you solved recently.",
 ]
+# Answers are deliberately complete (the agent now probes genuinely thin answers, by design)
+# and single-sentence (a TTS inter-sentence pause > 700ms would split one answer into two
+# utterances and desync this test's fixed one-answer-per-question script).
 ANSWERS = [
     "Yes, I'm ready to begin.",
-    "I was a backend engineer for three years.",
-    "Mostly Python and Go.",
-    "We had a race condition in the billing worker and I fixed it with idempotency keys.",
+    "I was a backend engineer at a fintech startup for three years where I owned the billing services and mentored two junior developers.",
+    "I'm most comfortable with Python which I've used daily for five years along with Go for the last two.",
+    "We had a race condition in the billing worker that double charged customers and I fixed it with idempotency keys after tracing the requests.",
+]
+# Distinctive core of each question — the agent asks the configured wording but may vary the
+# lead-in modality ("Can you" -> "could you"), so match on the part that identifies the question.
+QUESTION_CORES = [
+    "your most recent role and responsibilities",
+    "programming languages are you most comfortable with",
+    "challenging technical problem you solved recently",
 ]
 SILENT = base64.b64encode(b"\xff" * 160).decode()
 
@@ -70,8 +80,8 @@ async def main():
 
     # Every configured question must appear in some agent turn, AND be followed by a
     # real candidate turn (not immediately by the end-call line) before the call ends.
-    for i, q in enumerate(QUESTIONS):
-        q_idx = next((j for j, t in enumerate(turns) if t["role"] == "agent" and q in t["text"]), None)
+    for i, q in enumerate(QUESTION_CORES):
+        q_idx = next((j for j, t in enumerate(turns) if t["role"] == "agent" and q.lower() in t["text"].lower()), None)
         assert q_idx is not None, f"question {i+1} was never asked: {q!r}"
         after = turns[q_idx + 1:]
         assert after and after[0]["role"] == "candidate", (

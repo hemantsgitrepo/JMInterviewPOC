@@ -19,23 +19,29 @@ import models
 import store
 from audio import BargeInDetector, Endpointer, pcm_to_wav, ulaw_to_pcm
 
-LISTEN_TIMEOUT_MS = 4500  # wait 4-5s of total silence before the "still there?" reprompt
-LISTEN_TIMEOUT_FRAMES = LISTEN_TIMEOUT_MS // 20
 CHUNK = 4000  # mu-law bytes per outbound ws message (~0.5s)
+STITCH_MAX_BYTES = 30 * 8000  # cap stitched audio at ~30s so a rambler can't grow it unbounded
+# A transcribed utterance ending on one of these is almost certainly mid-thought (the caller
+# paused, not finished) — keep their audio and wait for the rest instead of answering over them.
+CONTINUATION_WORDS = {
+    "and", "or", "but", "so", "because", "cause", "that", "which", "with", "to", "for",
+    "of", "the", "a", "an", "my", "our", "their", "um", "uh", "like", "if", "when", "then",
+    "also", "plus", "i", "we", "it's", "its", "is",
+}
 MAX_FOLLOWUPS = 2
 NOISE_MULT = 3.0       # live speech threshold = noise_floor * this
 BARGE_MARGIN = 1.4     # barge-in needs to clear the listen threshold by this factor (resists echo)
 THRESHOLD_CEIL = 2500  # clamp so a noisy burst can't blind the VAD
 
 SYSTEM_PROMPT = """You are an automated phone interviewer for {company_name}, speaking with
-{candidate_name} on a live voice call. You must sound like a warm, natural human on the phone.
+{candidate_name} on a live voice call. You must sound like a warm, natural human interviewer.
 
 WRITE FOR THE EAR, NOT THE EYE:
-- Keep each reply under 25 words. Never monologue. One thought at a time.
+- Keep each reply under 30 words. Never monologue. One thought at a time.
 - Use everyday contractions ("I'm", "you're", "we'll", "that's") and simple, spoken phrasing.
 - Never use markdown, bullet points, lists, digits-as-symbols, or complex punctuation.
 - Do NOT open with a filler acknowledgment ("Right,", "Got it,", "Okay,", "Mm-hmm,") - the system
-  already plays a short verbal acknowledgment before you respond, so starting with another one
+  may already play a short verbal acknowledgment before you respond, so starting with another one
   makes it sound doubled and repetitive. Go straight into your actual sentence.
 - Split your reply into short spoken clauses separated by a double pipe "||". Put the single most
   important part (usually the actual question) in the FIRST clause, since the caller may interrupt.
@@ -44,19 +50,88 @@ WRITE FOR THE EAR, NOT THE EYE:
 Interview questions, in order:
 {questions}
 
-RULES:
+CONDUCT:
 - A [STATUS] note at the end of each candidate message tells you which question you're on. Ask that
   one question at a time, and acknowledge their answer briefly before moving to the next.
-- If an answer is off-topic or unclear, or they ask something you can't answer, gently redirect once,
-  then move on. Never invent facts about {company_name}, the salary, or the role.
-- If the candidate wants to stop, is hostile, or clearly wants to end, wrap up politely.
-- When all questions are answered or the call must end, use action "end_call". Do NOT speak a closing
-  line yourself — the system plays a configured one.
+- Ask each question using its EXACT configured wording from the list above (a short lead-in
+  before it is fine). Only reword a question when the candidate asks for clarification.
+- Stay neutral: never praise or grade an answer ("great answer" or "good example" is banned). Reassure without
+  judging: "there are no wrong answers here." Mirror their energy mildly; never mirror negativity.
+- Use the candidate's name at most once after the opening line.
+- When it feels natural, reference something specific they said earlier — it shows you're listening.
+- Never invent facts about {company_name}, the salary, or the role. If they ask about pay,
+  benefits, or role details: "the recruiting team can cover that in the next round."
+- If they ask whether you're an AI or whether the call is recorded, answer honestly: yes, this is
+  an AI interview call, and yes it's recorded, as mentioned at the start. If they ask how many
+  questions are left, tell them.
 
-Respond ONLY with JSON: {{"reply": "<what you say next, with || clause breaks>", "action": "stay" | "ask_next" | "end_call"}}
+HANDLING THE HUMAN:
+- "I don't know" or hesitation: encourage first — simplify the question and invite an instinct
+  ("No wrong answers here — what's your gut say?"). Do NOT offer to skip on a first "I don't know".
+  If they still can't engage, or explicitly ask to skip ("skip", "pass", "next question"), offer
+  once: rephrase it, or skip it. Use action "skip" ONLY after they confirm skipping.
+- They ask you to repeat the question ("say that again?"): use action "repeat" — the system
+  replays the exact question. Your reply should be only a short lead-in like "Of course."
+- They revise or add to an EARLIER answer: acknowledge it naturally and continue — never say you
+  can't go back. Their latest statement is what counts.
+- Off-topic or rambling: never scold; redirect specifically ("And on the databases side?"). After
+  two redirects on the same question, take what you have and move on.
+- They ask what a question means: rephrase it simpler, give one small example, then re-ask it.
+- Probe ONLY when an answer is a bare "yes"/"no" or has no real content ("Could you give me an
+  example?"), and only once. A short but complete answer is a fine answer — accept it and move
+  on. If they stay terse after one probe, accept that too; don't badger.
+- They ask your opinion: deflect warmly and re-anchor: "I'm here for your take — what do you think?"
+- They want to stop early: confirm once, mentioning how many questions remain ("We have just N
+  left — want to finish, or wrap up now?"). Only on their confirmation use "end_call". If they are
+  hostile or clearly done, wrap up politely with "end_call".
+- If the transcription looks garbled or cut off, ask them to say it again rather than guessing.
+
+Respond ONLY with JSON:
+{{"reply": "<what you say next, with || clause breaks>", "action": "stay" | "ask_next" | "skip" | "repeat" | "end_call", "reason": "<only with skip: their reason for skipping, if they gave one>"}}
 - "ask_next": the current question was answered; your reply acknowledges it and asks the NEXT question.
-- "stay": you need a clarification or follow-up on the CURRENT question.
-- "end_call": interview complete or should be terminated."""
+- "stay": clarification, encouragement, follow-up, or redirect on the CURRENT question.
+- "skip": they confirmed skipping; your reply acknowledges ("No problem.") and asks the NEXT question.
+- "repeat": they want the current question again; reply is just a short lead-in, the system speaks the question.
+- "end_call": interview complete or should be terminated. Do NOT speak a closing line yourself —
+  the system plays a configured one.
+
+CRITICAL: if your reply asks the candidate ANYTHING — including "would you like to wrap up?" —
+the action MUST be "stay". Never pair a question with "end_call": that hangs up before they can
+answer you. Only use "end_call" once they have already answered such a question."""
+
+CONFIRM_KEY_FACTS_RULE = """
+- When an answer states a load-bearing fact (notice period, years of experience, availability,
+  current compensation) or the transcription of one looks garbled, paraphrase it back and confirm
+  ("So that's a two month notice period — did I get that right?") before moving on. If they say
+  you got it wrong, apologize briefly and invite them to restate. Do this only for facts, never
+  for ordinary descriptive answers."""
+
+
+def classify_utterance(text: str, utt_rms: int, behavior: dict) -> str:
+    """Cheap pre-LLM triage of a transcribed utterance. Returns:
+    - "answer":   real content, hand it to the LLM
+    - "ignore":   noise / Whisper hallucination — discard silently
+    - "wait":     filler-only ("um...") — they're thinking; say nothing, listen longer
+    - "reprompt": they audibly spoke but nothing transcribed — ask them to say it again
+    """
+    norm = re.sub(r"[^a-z' ]", " ", (text or "").lower()).strip()
+    norm = " ".join(norm.split())
+    if not norm:
+        return "reprompt" if utt_rms >= behavior["low_volume_rms"] else "ignore"
+    if norm in models.HALLUCINATIONS:
+        return "ignore"
+    words = norm.split()
+    if sum(w in behavior["filler_words"] for w in words) / len(words) >= behavior["filler_ratio"]:
+        return "wait"
+    return "answer"
+
+
+def ends_midthought(text: str) -> bool:
+    """True if the transcription trails off on a connective/article — a paused, unfinished
+    sentence rather than a complete answer. Used to keep listening (and stitch) instead of
+    cutting in with an acknowledgment or reply."""
+    words = re.sub(r"[^a-z' ]", " ", (text or "").lower()).split()
+    return bool(words) and words[-1] in CONTINUATION_WORDS
 
 
 def split_clauses(text: str) -> list[str]:
@@ -83,7 +158,11 @@ class CallSession:
         self.followups = 0
         self.history: list[dict] = []
         self.silent_frames = 0
-        self.reprompted = False
+        self.silence_tier = 0  # escalation: 0 -> reassure, 1 -> offer repeat/skip, 2 -> end
+        self.skips: list[dict] = []  # [{index, question, reason, at}] — recorded, not policed
+        self.stitch_buf = b""  # audio from a mid-thought pause, prepended to their next utterance
+        self.awaiting_end_confirm = False  # an early end was offered; require a "yes" before hanging up
+        self.behavior = store.config["behavior"]  # re-snapshotted with config in on_start
         self.ending = False
         self.opening_in_progress = False  # protects the opening line from barge-in
         # adaptive VAD
@@ -167,6 +246,7 @@ class CallSession:
         self.cand = store.candidates[cid]
         self.cand["status"] = "in_progress"
         self.config = dict(store.config)  # snapshot
+        self.behavior = self.config["behavior"]
         opening = self.cand.get("opening_text") or self.config["opening_line"]
         self.cand["transcript"].append({"role": "agent", "text": opening, "at": time.time()})
         self.history.append({"role": "assistant", "content": opening})
@@ -204,13 +284,22 @@ class CallSession:
                 self.silent_frames = 0
             else:
                 self.silent_frames += 1
-                if self.silent_frames >= LISTEN_TIMEOUT_FRAMES:
+                # Escalating silence tiers, each measured from the end of the last prompt
+                # (turn_done resets silent_frames): reassure -> offer a way out -> hang up.
+                t1, t2 = self.behavior["silence_tier1_ms"], self.behavior["silence_tier2_ms"]
+                wait_ms = (t1, max(t2 - t1, 1000), t2)[min(self.silence_tier, 2)]
+                if self.silent_frames >= wait_ms // 20:
                     self.silent_frames = 0
-                    if self.reprompted:
-                        self.start_line("It seems we got disconnected. " + self.config["end_call_line"], "end")
+                    if self.silence_tier == 0:
+                        self.start_line("Take your time.", "turn_done")
+                    elif self.silence_tier == 1:
+                        self.start_line(
+                            "Would you like me to repeat the question? || Or we can move on to the next one.",
+                            "turn_done",
+                        )
                     else:
-                        self.reprompted = True
-                        self.start_line("Are you still there?", "turn_done")
+                        self.start_line("It seems we got disconnected. " + self.config["end_call_line"], "end")
+                    self.silence_tier += 1
         # PROCESSING: ignore inbound (brief window between utterance end and first audio)
 
     async def on_mark(self, msg: dict):
@@ -243,6 +332,10 @@ class CallSession:
         self.state = "PROCESSING"
         if mark == "end":
             self.ending = True
+        # System-spoken lines must reach the LLM history too — the candidate's reply to
+        # "want me to repeat the question?" is meaningless to it otherwise.
+        self.history.append({"role": "assistant", "content": json.dumps({"reply": text, "action": "stay"})})
+        self._last_hist_idx = len(self.history) - 1
         self.turn_task = asyncio.create_task(self.deliver(split_clauses(text), mark))
 
     async def handle_barge_in(self, onset_frames: list[bytes]):
@@ -258,6 +351,7 @@ class CallSession:
         heard = " ".join(self.clauses[: max(1, self.clauses_played + 1)]) if self.clauses else ""
         self._truncate_agent(heard)
         self.pending = None  # interrupted turn never committed -> stay on same question
+        self.stitch_buf = b""  # a barge-in is a fresh utterance, not a continuation of the old one
         self.state = "LISTENING"
         self.silent_frames = 0
         self.endpointer.reset()
@@ -265,15 +359,32 @@ class CallSession:
         for f in onset_frames:  # don't lose the start of their interruption
             self.endpointer.feed(f, self.threshold)
 
+    def _play_ack(self):
+        """Play a short pre-synthesized acknowledgment (or, sometimes, nothing — the None
+        entries in the pool make an occasional silent beat, which is the most human ack)."""
+        clip = random.choice(store.FILLER_ULAW) if store.FILLER_ULAW else None
+        if clip:
+            self.state = "SPEAKING"
+            self.enqueue(clip, "filler")
+
+    def _resume_listening(self, extra_wait_ms: int = 0):
+        """Return to LISTENING without speaking; extra_wait_ms extends the silence budget."""
+        self.state = "LISTENING"
+        self.silent_frames = -(extra_wait_ms // 20)
+        self.endpointer.reset()
+        self.barge.reset()
+
     async def process_utterance(self, utt: bytes):
         try:
             # new turn: clear stale clause bookkeeping so a barge during the filler/think
             # window can't truncate the previous agent turn's transcript entry
             self.clauses = []
             self._last_agent_idx = None
-            if store.FILLER_ULAW:  # mask latency: acknowledge instantly while we think
-                self.state = "SPEAKING"
-                self.enqueue(random.choice(store.FILLER_ULAW), "filler")
+            # Continuation: if a previous fragment ended mid-thought, prepend its audio so STT
+            # sees the whole sentence stitched together, not just the tail.
+            if self.stitch_buf:
+                utt = self.stitch_buf + utt
+                self.stitch_buf = b""
             t0 = time.monotonic()
             stt = await models.transcribe(pcm_to_wav(ulaw_to_pcm(utt), 8000))
             t1 = time.monotonic()
@@ -285,12 +396,30 @@ class CallSession:
             else:
                 self.usage["stt"]["cost_known"] = False
             text = stt["text"]
-            if not text:
-                self.state = "LISTENING"
-                self.endpointer.reset()
-                self.barge.reset()
+            verdict = classify_utterance(text, audio.rms(utt), self.behavior)
+            if verdict == "ignore":  # noise / Whisper hallucination — no answer here
+                self._resume_listening()
                 return
-            self.reprompted = False
+            if verdict == "wait":  # filler-only: they're thinking; a human just waits
+                self._resume_listening(self.behavior["filler_extra_wait_ms"])
+                return
+            if verdict == "reprompt":  # they spoke, nothing transcribed
+                await self.deliver(
+                    split_clauses("Sorry, I didn't quite catch that. || Could you say that again, a little louder?"),
+                    "turn_done",
+                )
+                return
+            if ends_midthought(text) and len(utt) < STITCH_MAX_BYTES:
+                # they paused mid-sentence — hold their audio and keep listening rather than
+                # answering over them (the core of observation 1). Ack stays silent until done.
+                self._resume_listening(self.behavior["filler_extra_wait_ms"])
+                self.stitch_buf = utt
+                return
+            # Committed to a real, complete answer: NOW play the ack (masks the LLM+TTS wait).
+            # Deferring it to here means the agent never acknowledges over a caller who is
+            # still mid-thought — only once we're actually going to respond.
+            self._play_ack()
+            self.silence_tier = 0
             self.cand["transcript"].append({"role": "candidate", "text": text, "at": time.time()})
             self.history.append({"role": "user", "content": text + self.status_line()})
             turn, llm_usage = await models.next_turn(self.system_prompt(), self.history)
@@ -328,8 +457,45 @@ class CallSession:
         """Decide clauses + closing mark, and stash the index change to commit on clean end."""
         action, reply = turn["action"], turn.get("reply", "")
         qs = self.config["questions"]
+        if action == "repeat" and 0 <= self.question_index < len(qs):
+            # replay the configured question verbatim — the LLM only supplies a short lead-in
+            self.pending = None
+            return split_clauses(reply)[:1] + [qs[self.question_index]], "turn_done"
+        if action == "repeat":  # nothing to repeat yet (opening phase) — treat as a follow-up
+            action = "stay"
+        # Early-end confirmation guard: the agent must never hang up on the same turn it proposes
+        # ending. Two tells that an end_call is a *proposal* rather than a decision:
+        #   - the reply asks something ("...or wrap up now?") — you cannot ask and hang up at once
+        #   - questions the caller hasn't even been asked yet still remain
+        # Either way: speak the offer, keep listening, and require a second end_call (their "yes")
+        # before the closing line plays. Natural completion is NOT gated here — it arrives as
+        # ask_next/skip running past the last question, so `action` is never "end_call" for it.
+        if action == "end_call":
+            proposing = "?" in reply or self.question_index < len(qs) - 1
+            if proposing and not self.awaiting_end_confirm:
+                self.awaiting_end_confirm = True
+                self.pending = None
+                # rewrite history so the model sees it asked, not that it already ended
+                if self._last_hist_idx is not None and self._last_hist_idx < len(self.history):
+                    self.history[self._last_hist_idx]["content"] = json.dumps({"reply": reply, "action": "stay"})
+                clauses = split_clauses(reply)
+                if "?" not in reply:  # it announced an ending without asking — make it a real question
+                    clauses.append("Would you like to wrap up here, or keep going?")
+                return clauses, "turn_done"
+        else:
+            self.awaiting_end_confirm = False  # any other action clears a pending offer
         next_i, next_f, effective = self.question_index, self.followups, action
-        if action == "ask_next":
+        if action == "skip":
+            self.skips.append({
+                "index": self.question_index,
+                "question": qs[self.question_index] if 0 <= self.question_index < len(qs) else None,
+                "reason": turn.get("reason") or None,
+                "at": time.time(),
+            })
+            next_i, next_f = self.question_index + 1, 0
+            if next_i >= len(qs):
+                effective = "end_call"
+        elif action == "ask_next":
             next_i, next_f = self.question_index + 1, 0
             if next_i >= len(qs):
                 effective = "end_call"
@@ -362,11 +528,14 @@ class CallSession:
             )
 
     def system_prompt(self) -> str:
-        return SYSTEM_PROMPT.format(
+        prompt = SYSTEM_PROMPT.format(
             company_name=self.config["company_name"],
             candidate_name=self.cand["name"],
             questions="\n".join(f"{i+1}. {q}" for i, q in enumerate(self.config["questions"])),
         )
+        if self.behavior["confirm_key_facts"]:
+            prompt += CONFIRM_KEY_FACTS_RULE
+        return prompt
 
     def status_line(self) -> str:
         qs = self.config["questions"]
@@ -376,6 +545,11 @@ class CallSession:
         note = " This is the LAST question." if i == len(qs) - 1 else ""
         if self.followups >= MAX_FOLLOWUPS:
             note += " No more follow-ups allowed on this question; move on."
+        if self.skips:
+            note += f" Questions skipped so far: {len(self.skips)}."
+            if len(self.skips) >= self.behavior["max_skips"]:
+                note += (" That's quite a few — if they struggle again, warmly offer to either"
+                         " continue or wrap up the interview.")
         return f'\n\n[STATUS] You are on question {i+1} of {len(qs)}: "{qs[i]}".{note}'
 
     def _update_noise(self, frame: bytes):
@@ -405,6 +579,7 @@ class CallSession:
             self.cand["status"] = "completed"
             self.cand["partial"] = not self.ending
         self.cand["usage"] = self.usage
+        self.cand["skips"] = self.skips
         known_cost, any_known = 0.0, False
         if self.usage["stt"]["calls"] and self.usage["stt"]["cost_known"]:
             known_cost += self.usage["stt"]["cost"]
@@ -419,6 +594,7 @@ class CallSession:
                 {
                     "candidate": {k: self.cand[k] for k in ("id", "name", "phone", "status", "partial")},
                     "config_snapshot": self.config,
+                    "skips": self.skips,
                     "turns": self.cand["transcript"],
                 },
                 f,

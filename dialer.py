@@ -54,7 +54,8 @@ async def run_session():
     try:
         if not store.FILLER_ULAW:  # pre-warm latency-masking clips once
             try:
-                store.FILLER_ULAW = [await models.speak(p) for p in store.FILLER_PHRASES]
+                # the None entries mean an occasional silent beat instead of a spoken ack
+                store.FILLER_ULAW = [await models.speak(p) for p in store.FILLER_PHRASES] + [None, None]
             except Exception:
                 store.FILLER_ULAW = []
         for cand in store.candidates_list():

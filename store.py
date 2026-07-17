@@ -19,6 +19,19 @@ config = {
         "jd_parsing_usage": None,        # {"prompt_tokens", "completion_tokens", "cost"}
         "question_generation_usage": None,
     },
+    # Conversational behavior knobs (server-side; not part of the UI's ConfigIn, so
+    # /api/config saves leave this block untouched).
+    "behavior": {
+        "silence_tier1_ms": 4000,     # pure reassurance ("Take your time.") — no question
+        "silence_tier2_ms": 9000,     # offer to repeat or move on
+        # True hesitation noises only — "like/so/actually" are content words, keep them out.
+        "filler_words": ["um", "uh", "erm", "hmm", "uhh", "umm", "huh", "mmm", "mm", "hm", "er", "ah"],
+        "filler_ratio": 0.8,          # >= this fraction filler tokens -> silent wait
+        "filler_extra_wait_ms": 6000, # extra listening window after a filler-only utterance
+        "low_volume_rms": 150,        # spoke but transcription empty + at least this loud -> reprompt
+        "max_skips": 3,               # soft: past this, warmly offer end-or-continue
+        "confirm_key_facts": False,   # paraphrase-confirm load-bearing factual answers
+    },
 }
 
 candidates: dict[str, dict] = {}  # id -> candidate dict
@@ -28,8 +41,10 @@ session = {"running": False, "current": None, "call_done": None}
 
 # Short "thinking" clips played the instant the candidate stops talking, to mask
 # STT+LLM+TTS latency. Pre-synthesized once by the dialer; empty in loopback (skipped).
-FILLER_PHRASES = ["Right.", "Okay.", "Sure."]
-FILLER_ULAW: list[bytes] = []
+# The dialer appends None entries so sometimes no acknowledgment plays — a beat of
+# silence before answering is the most human backchannel of all.
+FILLER_PHRASES = ["Right.", "Okay.", "Sure.", "Alright.", "I see.", "Got it.", "Mm, okay.", "Mhm."]
+FILLER_ULAW: list[bytes | None] = []
 
 
 def candidates_list() -> list[dict]:

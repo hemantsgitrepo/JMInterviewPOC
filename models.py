@@ -11,6 +11,16 @@ from audio import pcm_to_ulaw, resample
 
 load_dotenv()
 
+if os.environ.get("LANGSMITH_TRACING", "").lower() == "true":
+    from langsmith import traceable
+else:
+    def traceable(*dargs, **dkwargs):
+        """No-op stand-in: tracing is opt-in, so when disabled we never import langsmith
+        or wrap the call — zero added latency/cold-start cost on the hot path."""
+        if len(dargs) == 1 and callable(dargs[0]) and not dkwargs:
+            return dargs[0]  # bare @traceable usage
+        return lambda f: f  # @traceable(name=..., run_type=...) usage
+
 STT_MODEL = "openai/whisper-large-v3-turbo"
 LLM_MODEL = "google/gemini-2.5-flash"
 CARTESIA_MODEL = "sonic-3.5"
@@ -40,6 +50,7 @@ async def _retry(fn):
         return await fn()
 
 
+@traceable(name="stt_transcribe", run_type="tool")
 async def transcribe(wav: bytes) -> dict:
     """Returns {"text": str, "seconds": float|None, "cost": float|None} — cost/seconds
     come straight from OpenRouter's transcription usage block (real, not estimated)."""
@@ -62,6 +73,7 @@ async def transcribe(wav: bytes) -> dict:
     return await _retry(go)
 
 
+@traceable(name="llm_next_turn", run_type="llm")
 async def next_turn(system: str, messages: list[dict]) -> tuple[dict, dict]:
     """Returns ({"reply": str, "action": ...}, usage) where usage is
     {"prompt_tokens": int, "completion_tokens": int, "cost": float|None} — cost is real,
@@ -91,16 +103,26 @@ async def next_turn(system: str, messages: list[dict]) -> tuple[dict, dict]:
     return await _retry(go)
 
 
+# Phrases Whisper reliably hallucinates on noise / near-silence. A lone one of these is
+# never a real interview answer; call.py discards them silently so a cough transcribed as
+# "Bye" can't end the call.
+HALLUCINATIONS = {
+    "thank you", "thanks", "thank you very much", "thank you so much",
+    "thank you for watching", "thanks for watching", "bye", "you", "the end",
+}
+
+
 def _parse_json(content: str) -> dict:
     content = re.sub(r"^```(?:json)?|```$", "", content.strip(), flags=re.M).strip()
     m = re.search(r"\{.*\}", content, re.S)
     out = json.loads(m.group(0) if m else content)
-    if out.get("action") not in ("stay", "ask_next", "end_call"):
+    if out.get("action") not in ("stay", "ask_next", "skip", "repeat", "end_call"):
         out["action"] = "stay"
     out.setdefault("reply", "")
     return out
 
 
+@traceable(name="tts_speak", run_type="tool")
 async def speak(text: str) -> bytes:
     """Text -> 8kHz mu-law bytes ready for a Twilio media stream, via Cartesia Sonic 3.5."""
 
@@ -139,6 +161,7 @@ out loud in under a minute. Plain spoken sentences, no markdown, no numbering, n
 Respond ONLY with JSON: {"questions": ["<question 1>", "<question 2>", ...]}"""
 
 
+@traceable(name="llm_parse_jd", run_type="llm")
 async def parse_jd(jd_text: str) -> tuple[dict, dict]:
     """Classifies whether jd_text looks like a job description (separate call from question
     generation so each step's real token usage/cost can be tracked and shown individually).
@@ -174,6 +197,7 @@ async def parse_jd(jd_text: str) -> tuple[dict, dict]:
     return await _retry(go)
 
 
+@traceable(name="llm_generate_questions", run_type="llm")
 async def generate_questions_from_jd(jd_text: str) -> tuple[list[str], dict]:
     """Generates up to 8 interview questions from an already-validated JD.
     Returns ([str, ...], usage)."""

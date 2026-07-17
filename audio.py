@@ -11,6 +11,10 @@ FRAME_MS = 20  # Twilio media frames are 20ms of 8kHz mu-law (160 bytes)
 # ponytail: SPEECH_RMS is the floor; the live threshold adapts up from the measured
 # noise floor (see CallSession._update_noise). Tune SPEECH_RMS if a quiet line clips.
 SPEECH_RMS = 400
+# ponytail: 700ms. Raising this to 900 was tried and reverted — it made turn-taking feel
+# sluggish (every turn waits this long before the agent reacts). Mid-sentence pauses are
+# handled instead by the mid-thought/stitch path in call.process_utterance, which stays
+# silent rather than answering over the caller.
 SILENCE_END_MS = 700
 MAX_UTTERANCE_MS = 60_000
 PREROLL_FRAMES = 5  # 100ms kept before detected onset so first phoneme isn't clipped
