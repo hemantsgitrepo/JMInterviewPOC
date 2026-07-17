@@ -470,6 +470,14 @@ async function poll() {
 function esc(t) { return t.replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
 
 const modal = $("modal");
+
+// ---- Pricing Constants ----
+const PRICING = {
+  TWILIO_OUTBOUND_RATE_USD: 0.014,  // per minute
+  CARTESIA_TTS_RATE_USD: 39.00,      // per 1,000,000 characters
+  USD_TO_INR: 96.27
+};
+
 async function showTranscript(id) {
   try {
     const t = await api(`/api/candidates/${id}/transcript`);
@@ -481,7 +489,12 @@ async function showTranscript(id) {
   } catch (e) { toast(e.message, true); }
 }
 
-function fmtMoney(v) { return v == null ? "n/a" : `$${v.toFixed(6)}`; }
+function fmtMoney(v) {
+  if (v == null) return "n/a";
+  const usd = v.toFixed(6);
+  const inr = (v * PRICING.USD_TO_INR).toFixed(2);
+  return `$${usd} / ₹${inr}`;
+}
 function fmtDateTime(t) { return t ? new Date(t * 1000).toLocaleString() : "—"; }
 async function showInfo(id) {
   try {
@@ -495,6 +508,14 @@ async function showInfo(id) {
       + (jdParse ? (jdParse.prompt_tokens || 0) + (jdParse.completion_tokens || 0) : 0)
       + (qGen ? (qGen.prompt_tokens || 0) + (qGen.completion_tokens || 0) : 0);
     const durSec = (d.started_at && d.ended_at) ? Math.round(d.ended_at - d.started_at) : null;
+
+    // Calculate Twilio outbound call cost (per minute)
+    const twilioDurationMin = durSec ? durSec / 60 : 0;
+    const twilioCost = twilioDurationMin * PRICING.TWILIO_OUTBOUND_RATE_USD;
+
+    // Calculate Cartesia TTS cost (per 1,000,000 characters)
+    const cartesiaTtsCharacters = tts.characters || 0;
+    const cartesiaTtsCost = (cartesiaTtsCharacters / 1000000) * PRICING.CARTESIA_TTS_RATE_USD;
     $("modal-title").textContent = `Call Details — ${esc(d.name)}`;
     $("modal-body").innerHTML = `
       <div class="detail-grid">
@@ -515,20 +536,23 @@ async function showInfo(id) {
       <div class="section-title">Token Usage &amp; Cost</div>
       <div class="table-wrap">
       <table>
-        <thead><tr><th>Model</th><th>Usage</th><th>Cost</th></tr></thead>
+        <thead><tr><th>Service</th><th>Usage</th><th>Cost (USD / INR)</th></tr></thead>
         <tbody>
           <tr><td>Whisper (STT)</td><td style="color:var(--text-2)">${(stt.seconds || 0).toFixed(1)}s audio · ${stt.calls || 0} call(s)</td><td>${fmtMoney(stt.cost_known ? stt.cost : null)}</td></tr>
           <tr><td>Gemini 2.5 Flash (LLM)</td><td style="color:var(--text-2)">${llm.prompt_tokens || 0} prompt / ${llm.completion_tokens || 0} completion tokens</td><td>${fmtMoney(llm.cost_known ? llm.cost : null)}</td></tr>
-          <tr><td>Cartesia Sonic 3.5 (TTS)</td><td style="color:var(--text-2)">${tts.characters || 0} characters · ${tts.calls || 0} call(s)</td><td style="color:var(--text-2)">not reported by API</td></tr>
+          <tr><td>Cartesia Sonic 3.5 (TTS)</td><td style="color:var(--text-2)">${cartesiaTtsCharacters.toLocaleString()} characters · ${tts.calls || 0} call(s)</td><td>${fmtMoney(cartesiaTtsCost)}</td></tr>
           ${jdParse ? `<tr><td>JD Parsing <span class="hint" style="margin:0">(one-time, shared)</span></td><td style="color:var(--text-2)">${jdParse.prompt_tokens || 0} prompt / ${jdParse.completion_tokens || 0} completion tokens</td><td>${fmtMoney(jdParse.cost)}</td></tr>` : ""}
           ${qGen ? `<tr><td>Question Generation <span class="hint" style="margin:0">(one-time, shared)</span></td><td style="color:var(--text-2)">${qGen.prompt_tokens || 0} prompt / ${qGen.completion_tokens || 0} completion tokens</td><td>${fmtMoney(qGen.cost)}</td></tr>` : ""}
+          <tr style="border-top: 2px solid var(--border); font-weight: 600;"><td>Twilio Outbound Call</td><td style="color:var(--text-2)">${twilioDurationMin.toFixed(2)} min @ $${PRICING.TWILIO_OUTBOUND_RATE_USD}/min</td><td>${fmtMoney(twilioCost)}</td></tr>
         </tbody>
       </table>
       </div>
       <div class="cost-total">
         Total AI tokens: ${totalTokens.toLocaleString()}
-        <div style="margin-top:4px">Total known cost: ${fmtMoney(d.total_known_cost)}</div>
-        <div class="hint" style="text-align:right;margin-top:2px">Excludes Cartesia TTS cost (not returned by its API). JD Parsing / Question Generation are one-time, shared across all candidates — not per-call costs.</div>
+        <div style="margin-top:4px">Subtotal (AI + TTS): ${fmtMoney(d.total_known_cost)}</div>
+        <div style="margin-top:4px">Twilio Cost: ${fmtMoney(twilioCost)}</div>
+        <div style="margin-top:4px"><strong>Total Call Cost: ${fmtMoney((d.total_known_cost || 0) + twilioCost + cartesiaTtsCost)}</strong></div>
+        <div class="hint" style="text-align:right;margin-top:8px">Cartesia TTS cost calculated from $${PRICING.CARTESIA_TTS_RATE_USD}/1M characters. Twilio cost calculated from $${PRICING.TWILIO_OUTBOUND_RATE_USD}/min. JD Parsing / Question Generation are one-time, shared across all candidates — not per-call costs.</div>
       </div>
     `;
     modal.showModal();
