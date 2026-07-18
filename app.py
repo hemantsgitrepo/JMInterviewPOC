@@ -148,22 +148,21 @@ def reset_settings(request: Request):
     return {"ok": True, "settings": settings.reset()}
 
 
-async def _parse_and_generate(text: str) -> list[str]:
-    """Shared by paste and PDF upload: two real LLM calls (parse, then generate) so
-    each step's token usage/cost is tracked and shown as its own line item."""
+async def _validate_and_store_jd(text: str) -> dict:
+    """Validates the text as a JD, stores it for prompt grounding, and auto-populates
+    company/role when the JD states them. Never generates questions — that only happens
+    on the explicit Generate button (see /api/questions/generate)."""
     parse_result, parse_usage = await models.parse_jd(text)
     store.config["ai_usage"]["jd_text"] = text[:500]
     store.config["ai_usage"]["jd_parsing_usage"] = parse_usage
     if not parse_result.get("is_job_description"):
         raise HTTPException(400, parse_result.get("reason") or "That doesn't look like a job description.")
     store.config["jd_text"] = text  # full validated JD: grounds answers to role questions
-    questions, gen_usage = await models.generate_questions_from_jd(text)
-    store.config["ai_usage"]["questions_from_jd"] = True
-    store.config["ai_usage"]["question_generation_usage"] = gen_usage
-    questions = [q.strip() for q in questions if q.strip()]
-    if not questions:
-        raise HTTPException(502, "The AI didn't return any questions — try again.")
-    return questions
+    if (parse_result.get("company_name") or "").strip():
+        store.config["company_name"] = parse_result["company_name"].strip()
+    if (parse_result.get("role_name") or "").strip():
+        store.config["role_name"] = parse_result["role_name"].strip()
+    return parse_result
 
 
 @app.post("/api/questions/generate")
@@ -171,24 +170,36 @@ async def generate_questions(body: JDIn):
     text = body.jd_text.strip()
     if len(text) < 40:
         raise HTTPException(400, "Please paste a longer job description (at least a few sentences).")
-    return {"questions": await _parse_and_generate(text)}
+    await _validate_and_store_jd(text)
+    questions, gen_usage = await models.generate_questions_from_jd(text)
+    store.config["ai_usage"]["questions_from_jd"] = True
+    store.config["ai_usage"]["question_generation_usage"] = gen_usage
+    questions = [q.strip() for q in questions if q.strip()]
+    if not questions:
+        raise HTTPException(502, "The AI didn't return any questions — try again.")
+    return {"questions": questions}
 
 
-@app.post("/api/questions/generate-from-pdf")
-async def generate_questions_from_pdf(file: UploadFile):
+@app.post("/api/jd/upload-pdf")
+async def upload_jd_pdf(file: UploadFile):
+    """Extract + validate a JD PDF and populate config from it. Does NOT generate
+    questions — the user triggers that explicitly with the Generate button."""
     if file.content_type != "application/pdf":
         raise HTTPException(400, "Only PDF files are supported.")
     try:
         pdf_bytes = await file.read()
         pdf = PdfReader(io.BytesIO(pdf_bytes))
         text = "".join(page.extract_text() for page in pdf.pages).strip()
-        if len(text) < 40:
-            raise HTTPException(400, "PDF is too short or empty. Please upload a longer job description.")
-        return {"questions": await _parse_and_generate(text)}
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(500, f"Error reading PDF: {str(e)}")
+    if len(text) < 40:
+        raise HTTPException(400, "PDF is too short or empty. Please upload a longer job description.")
+    await _validate_and_store_jd(text)
+    return {
+        "jd_text": text,
+        "company_name": store.config["company_name"],
+        "role_name": store.config["role_name"],
+    }
 
 
 @app.post("/api/candidates")

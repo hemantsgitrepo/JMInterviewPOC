@@ -242,10 +242,11 @@ async def _speak_openai(text: str) -> bytes:
 
 JD_PARSE_SYSTEM_PROMPT = """You review a piece of text and decide whether it is a job description
 (JD) — text describing an open role a company is hiring for (job title, responsibilities,
-required skills/qualifications, or "about the role" language).
+required skills/qualifications, or "about the role" language). If it is one, also extract
+the hiring company's name and the role/job title exactly as stated — null when not stated.
 
 Respond ONLY with JSON:
-{"is_job_description": true|false, "reason": "<short reason, required if false, else empty>"}"""
+{"is_job_description": true|false, "reason": "<short reason, required if false, else empty>", "company_name": "<company name or null>", "role_name": "<job title or null>"}"""
 
 QUESTION_GEN_SYSTEM_PROMPT = """You are given a job description. Write 5 to 8 clear interview
 questions tailored to the specific responsibilities and skills in it. Each must be answerable
@@ -281,6 +282,8 @@ async def parse_jd(jd_text: str) -> tuple[dict, dict]:
         result = _parse_json_object(content)
         result.setdefault("is_job_description", False)
         result.setdefault("reason", "")
+        result.setdefault("company_name", None)
+        result.setdefault("role_name", None)
         return result, {
             "prompt_tokens": usage.get("prompt_tokens"),
             "completion_tokens": usage.get("completion_tokens"),
