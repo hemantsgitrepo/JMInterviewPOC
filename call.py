@@ -473,7 +473,8 @@ class CallSession:
 
     def system_prompt(self) -> str:
         prompt = settings.build_system_prompt(
-            self.config["company_name"], self.cand["name"], self.config["questions"]
+            self.config["company_name"], self.cand["name"], self.config["questions"],
+            job_description=self.config.get("jd_text", ""),
         )
         if self.behavior["confirm_key_facts"]:
             prompt += CONFIRM_KEY_FACTS_RULE

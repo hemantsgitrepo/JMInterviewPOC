@@ -245,9 +245,22 @@ def reset() -> dict:
         return dict(_settings)
 
 
-def build_system_prompt(company_name: str, candidate_name: str, questions: list[str]) -> str:
-    """Editable template (formatted) + optional extra instructions + locked protocol.
-    With default settings the output is byte-identical to the v0.1.0 hardcoded prompt."""
+JD_CONTEXT_MAX_CHARS = 4000  # bound per-turn prompt tokens/latency; long JDs are truncated
+
+JD_CONTEXT_HEADER = """JOB DESCRIPTION CONTEXT:
+The full job description for this role is below. When the candidate asks about the role,
+its responsibilities, or its requirements, answer briefly and accurately FROM this
+description — answering from it is not inventing facts. If it does not cover their
+question (salary, benefits, hiring process), keep deferring to the recruiting team as
+instructed above."""
+
+
+def build_system_prompt(
+    company_name: str, candidate_name: str, questions: list[str], job_description: str = ""
+) -> str:
+    """Editable template (formatted) + optional JD context + optional extra instructions
+    + locked protocol. With default settings and no JD on file, the output is
+    byte-identical to the v0.1.0 hardcoded prompt."""
     s = get()
     numbered = "\n".join(f"{i+1}. {q}" for i, q in enumerate(questions))
     try:
@@ -260,6 +273,12 @@ def build_system_prompt(company_name: str, candidate_name: str, questions: list[
         body = DEFAULT_PROMPT_TEMPLATE.format(
             company_name=company_name, candidate_name=candidate_name, questions=numbered
         )
+    jd = (job_description or "").strip()
+    if jd:
+        if len(jd) > JD_CONTEXT_MAX_CHARS:
+            logger.info("JD context truncated from %d to %d chars", len(jd), JD_CONTEXT_MAX_CHARS)
+            jd = jd[:JD_CONTEXT_MAX_CHARS]
+        body += "\n\n" + JD_CONTEXT_HEADER + "\n---\n" + jd + "\n---"
     extra = s["extra_instructions"].strip()
     if extra:
         body += "\n\nADDITIONAL INSTRUCTIONS:\n" + extra

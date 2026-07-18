@@ -156,6 +156,7 @@ async def _parse_and_generate(text: str) -> list[str]:
     store.config["ai_usage"]["jd_parsing_usage"] = parse_usage
     if not parse_result.get("is_job_description"):
         raise HTTPException(400, parse_result.get("reason") or "That doesn't look like a job description.")
+    store.config["jd_text"] = text  # full validated JD: grounds answers to role questions
     questions, gen_usage = await models.generate_questions_from_jd(text)
     store.config["ai_usage"]["questions_from_jd"] = True
     store.config["ai_usage"]["question_generation_usage"] = gen_usage
@@ -231,6 +232,7 @@ def reset_all():
     if store.session["running"]:
         raise HTTPException(409, "Cannot reset while a session is running")
     store.config["questions"] = []
+    store.config["jd_text"] = ""
     store.config["ai_usage"] = {
         "jd_text": None,
         "questions_from_jd": False,

@@ -13,6 +13,7 @@ config = {
     "role_name": "Software Engineer",
     "questions": [],  # no defaults — added manually or via the AI generator
     "end_call_line": "Thank you for your time today. Our team will review and be in touch. Goodbye!",
+    "jd_text": "",  # full uploaded/pasted JD; injected into the system prompt when present
     "ai_usage": {
         "jd_text": None,
         "questions_from_jd": False,
