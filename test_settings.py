@@ -116,7 +116,7 @@ cleanup()
 # --- 5. extra_instructions placement ----------------------------------------
 settings.update({"extra_instructions": "Never discuss politics."})
 out = settings.build_system_prompt("Acme", "Jane", QS)
-extra_pos = out.index("ADDITIONAL INSTRUCTIONS:\nNever discuss politics.")
+extra_pos = out.index("ADDITIONAL INSTRUCTIONS (these override any conflicting rules above):\nNever discuss politics.")
 proto_pos = out.index(settings.PROMPT_PROTOCOL)
 assert extra_pos < proto_pos, "extra instructions must precede the locked protocol"
 assert out.endswith(settings.PROMPT_PROTOCOL), "locked protocol must be last"

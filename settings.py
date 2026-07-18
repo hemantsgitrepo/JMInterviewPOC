@@ -281,7 +281,10 @@ def build_system_prompt(
         body += "\n\n" + JD_CONTEXT_HEADER + "\n---\n" + jd + "\n---"
     extra = s["extra_instructions"].strip()
     if extra:
-        body += "\n\nADDITIONAL INSTRUCTIONS:\n" + extra
+        # Overrides conflicting conduct rules by design: e.g. the default prompt deflects
+        # salary questions to the recruiting team, but an admin can supply a salary band
+        # here and the agent will use it. With no guidance given, deflection stands.
+        body += "\n\nADDITIONAL INSTRUCTIONS (these override any conflicting rules above):\n" + extra
     return body + "\n\n" + PROMPT_PROTOCOL
 
 

@@ -104,6 +104,7 @@ class CallSession:
         self.skips: list[dict] = []  # [{index, question, reason, at}] — recorded, not policed
         self.stitch_buf = b""  # audio from a mid-thought pause, prepended to their next utterance
         self.awaiting_end_confirm = False  # an early end was offered; require a "yes" before hanging up
+        self.offered_closing_questions = False  # closing Q&A offered (JD on file only)
         self.behavior = store.config["behavior"]  # re-snapshotted with config in on_start
         self.ending = False
         self.opening_in_progress = False  # protects the opening line from barge-in
@@ -449,6 +450,22 @@ class CallSession:
                 next_i, next_f = self.question_index + 1, 0
                 if next_i >= len(qs):
                     effective = "end_call"
+        # Closing Q&A — mandatory when a JD is on file: a naturally completed interview
+        # offers the candidate their own questions before the closing line plays. Gated on
+        # natural completion only (action != "end_call"), so a candidate who asked to end
+        # early is never trapped in a Q&A they wanted out of. Length is bounded by the
+        # same MAX_FOLLOWUPS counter as any other question.
+        if (
+            effective == "end_call"
+            and action != "end_call"
+            and (self.config.get("jd_text") or "").strip()
+            and not self.offered_closing_questions
+        ):
+            self.offered_closing_questions = True
+            self.pending = (len(qs), 0)
+            clauses = split_clauses(reply)
+            clauses.append("Before we wrap up, do you have any questions for me about the role or the company?")
+            return clauses, "turn_done"
         if effective == "end_call":
             self.ending = True
             self.pending = None
@@ -482,6 +499,10 @@ class CallSession:
 
     def status_line(self) -> str:
         qs = self.config["questions"]
+        if self.offered_closing_questions and self.question_index >= len(qs):
+            return ("\n\n[STATUS] All interview questions are done and the candidate was offered the"
+                    " chance to ask their own. Answer their questions using the job description"
+                    ' context; when they have none (or no more), use action "end_call".')
         if self.question_index < 0:
             return "\n\n[STATUS] No interview question has been asked yet. Ask the FIRST question now."
         i = min(self.question_index, len(qs) - 1)
