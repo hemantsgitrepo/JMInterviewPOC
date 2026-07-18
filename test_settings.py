@@ -57,7 +57,8 @@ assert os.path.exists("settings_test.json")
 settings._settings = None  # force reload from disk
 assert settings.get()["llm_model"] == "anthropic/claude-haiku-4.5", "reload lost the update"
 assert settings.is_default() == {
-    "llm_model": False, "prompt_template": True, "extra_instructions": True,
+    "llm_model": False, "stt_provider": True, "tts_provider": True,
+    "prompt_template": True, "extra_instructions": True,
 }
 settings.reset()
 assert not os.path.exists("settings_test.json")
@@ -70,6 +71,23 @@ for bad_model in ("evil/nonexistent", "", "google/gemini-2.5-flash "):
         raise AssertionError(f"accepted unvetted model {bad_model!r}")
     except ValueError:
         pass
+
+# provider validation: unknown id rejected; vetted id with a missing key rejected
+for field, bad in (("stt_provider", "evil-stt"), ("tts_provider", "evil-tts")):
+    try:
+        settings.update({field: bad})
+        raise AssertionError(f"accepted unvetted {field} {bad!r}")
+    except ValueError:
+        pass
+settings.VETTED_STT_PROVIDERS.append({"id": "tmp", "label": "Tmp", "key_env": "NO_SUCH_KEY_SET"})
+try:
+    settings.update({"stt_provider": "tmp"})
+    raise AssertionError("accepted a provider whose .env key is missing")
+except ValueError as e:
+    assert "NO_SUCH_KEY_SET" in str(e)
+finally:
+    settings.VETTED_STT_PROVIDERS.pop()
+cleanup()
 
 for bad_template, why in [
     ("a persona with no placeholders", "missing {questions}"),
@@ -98,7 +116,7 @@ cleanup()
 # --- 5. extra_instructions placement ----------------------------------------
 settings.update({"extra_instructions": "Never discuss politics."})
 out = settings.build_system_prompt("Acme", "Jane", QS)
-extra_pos = out.index("ADDITIONAL INSTRUCTIONS:\nNever discuss politics.")
+extra_pos = out.index("ADDITIONAL INSTRUCTIONS (these override any conflicting rules above):\nNever discuss politics.")
 proto_pos = out.index(settings.PROMPT_PROTOCOL)
 assert extra_pos < proto_pos, "extra instructions must precede the locked protocol"
 assert out.endswith(settings.PROMPT_PROTOCOL), "locked protocol must be last"
@@ -109,6 +127,18 @@ assert out.startswith("You are a friendly sales agent for Acme.")
 assert "1. Describe your last role?" in out
 assert out.endswith(settings.PROMPT_PROTOCOL)
 cleanup()
+
+# --- 5b. JD context block ----------------------------------------------------
+# absent JD -> byte-identical baseline (already asserted in 1); present JD -> block
+# sits between the template body and the locked protocol, truncated at the cap
+out = settings.build_system_prompt("Acme", "Jane", QS, job_description="We build billing systems in Python.")
+assert "JOB DESCRIPTION CONTEXT:" in out
+assert "We build billing systems in Python." in out
+assert out.index("JOB DESCRIPTION CONTEXT:") < out.index(settings.PROMPT_PROTOCOL)
+assert out.endswith(settings.PROMPT_PROTOCOL)
+long_jd = "x" * (settings.JD_CONTEXT_MAX_CHARS + 500)
+out = settings.build_system_prompt("Acme", "Jane", QS, job_description=long_jd)
+assert "x" * settings.JD_CONTEXT_MAX_CHARS in out and long_jd not in out, "JD not truncated at cap"
 
 # --- 6. admin gate -----------------------------------------------------------
 os.environ.pop("ADMIN_PASS", None)

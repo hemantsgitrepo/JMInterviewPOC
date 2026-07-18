@@ -11,8 +11,9 @@ config = {
     ),
     "company_name": "Acme Corp",
     "role_name": "Software Engineer",
-    "questions": [],  # no defaults — added manually or via the AI generator
+    "questions": ["Tell me something about yourself."],  # single default; more added manually or via AI
     "end_call_line": "Thank you for your time today. Our team will review and be in touch. Goodbye!",
+    "jd_text": "",  # full uploaded/pasted JD; injected into the system prompt when present
     "ai_usage": {
         "jd_text": None,
         "questions_from_jd": False,
@@ -40,11 +41,14 @@ order: list[str] = []
 session = {"running": False, "current": None, "call_done": None}
 
 # Short "thinking" clips played the instant the candidate stops talking, to mask
-# STT+LLM+TTS latency. Pre-synthesized once by the dialer; empty in loopback (skipped).
+# STT+LLM+TTS latency. Pre-synthesized by the dialer; empty in loopback (skipped).
 # The dialer appends None entries so sometimes no acknowledgment plays — a beat of
 # silence before answering is the most human backchannel of all.
+# FILLER_TTS_PROVIDER records which TTS provider the cached clips were synthesized
+# with, so a provider switch re-synthesizes them instead of mixing two voices.
 FILLER_PHRASES = ["Right.", "Okay.", "Sure.", "Alright.", "I see.", "Got it.", "Mm, okay.", "Mhm."]
 FILLER_ULAW: list[bytes | None] = []
+FILLER_TTS_PROVIDER: str | None = None
 
 
 def candidates_list() -> list[dict]:

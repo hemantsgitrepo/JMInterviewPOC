@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from twilio.rest import Client
 
 import models
+import settings
 import store
 
 load_dotenv()
@@ -71,18 +72,29 @@ def _create_call(cand: dict):
     )
 
 
+async def warm_fillers():
+    """Pre-warm latency-masking clips, re-synthesizing whenever the TTS provider has
+    changed since they were cached — otherwise acks ("Okay.", "Mhm.") keep playing in
+    the previous provider's voice while the main replies use the new one."""
+    provider = settings.tts_provider()
+    if store.FILLER_ULAW and store.FILLER_TTS_PROVIDER == provider:
+        return
+    try:
+        # the None entries mean an occasional silent beat instead of a spoken ack
+        store.FILLER_ULAW = [await models.speak(p) for p in store.FILLER_PHRASES] + [None, None]
+        store.FILLER_TTS_PROVIDER = provider
+    except Exception:
+        store.FILLER_ULAW = []
+        store.FILLER_TTS_PROVIDER = None
+
+
 async def run_session():
     store.session["running"] = True
     try:
-        if not store.FILLER_ULAW:  # pre-warm latency-masking clips once
-            try:
-                # the None entries mean an occasional silent beat instead of a spoken ack
-                store.FILLER_ULAW = [await models.speak(p) for p in store.FILLER_PHRASES] + [None, None]
-            except Exception:
-                store.FILLER_ULAW = []
         for cand in store.candidates_list():
             if cand["status"] != "pending":
                 continue
+            await warm_fillers()  # per candidate: picks up mid-session provider changes
             store.session["current"] = cand["id"]
             store.session["call_done"] = asyncio.Event()
             opening = (

@@ -175,6 +175,8 @@
   </svg>
   <div class="wordmark">Jobmanch<span>.ai</span></div>
   <div class="app-label">AI Interview Caller</div>
+  <button class="btn btn-ghost" id="settings-gear" title="Settings (admin)"
+    style="margin-left:auto;font-size:20px;padding:8px 12px" aria-label="Open settings">⚙️</button>
 </header>
 
 <main>
@@ -195,6 +197,7 @@
         <button class="btn btn-secondary btn-small" id="jd-upload-btn">📄 Upload PDF</button>
         <button class="btn btn-primary btn-small" id="generate-questions" disabled>✨ Generate Questions with AI (max 8)</button>
       </div>
+      <div id="jd-status" class="hint" style="display:none;color:var(--green)"></div>
 
       <label>Interview Questions</label>
       <div class="table-wrap">
@@ -215,8 +218,8 @@
         <div id="ai-usage-content"></div>
       </div>
 
+      <div class="hint" style="margin-top:16px">Configuration is saved automatically when you press Start Calling.</div>
       <div class="actions">
-        <button class="btn btn-secondary" id="save-config">Save Config</button>
         <button class="btn btn-danger btn-small btn-push-right" id="reset-all">Reset All</button>
       </div>
     </section>
@@ -245,7 +248,7 @@
     </div>
   </section>
 
-  <section class="card status-card" aria-labelledby="settings-h">
+  <section class="card status-card" id="settings-section" aria-labelledby="settings-h" style="display:none">
     <h2 id="settings-h">Settings <span class="hint" style="display:inline;font-weight:400">(admin)</span></h2>
     <div class="hint" style="margin-top:0">Runtime configuration: LLM model and interviewer persona. The current
       production configuration is the default — fields marked <span class="tag default">DEFAULT</span> are unchanged.
@@ -254,6 +257,14 @@
     <label for="set-llm-model">LLM model (live call turns + question generation)
       <span id="llm-model-tag" class="tag default">DEFAULT</span></label>
     <select id="set-llm-model"></select>
+
+    <label for="set-stt-provider">Speech-to-Text provider
+      <span id="stt-provider-tag" class="tag default">DEFAULT</span></label>
+    <select id="set-stt-provider"></select>
+
+    <label for="set-tts-provider">Text-to-Speech provider
+      <span id="tts-provider-tag" class="tag default">DEFAULT</span></label>
+    <select id="set-tts-provider"></select>
 
     <label for="set-prompt-template">Persona &amp; conduct prompt
       <span id="prompt-template-tag" class="tag default">DEFAULT</span></label>
@@ -272,17 +283,22 @@
       <div id="locked-protocol" class="protocol-view"></div>
     </details>
 
-    <div id="admin-pass-row" style="display:none">
-      <label for="admin-pass">Admin password</label>
-      <input id="admin-pass" type="password" autocomplete="off" placeholder="Required to save changes">
-    </div>
-
     <div class="actions">
       <button class="btn btn-secondary" id="save-settings">Save Settings</button>
       <button class="btn btn-danger btn-small btn-push-right" id="reset-settings">Restore Defaults</button>
     </div>
   </section>
 </main>
+
+<dialog id="admin-modal">
+  <h2 style="font-size:18px;font-weight:600;margin-bottom:8px">Settings access</h2>
+  <label for="admin-pass-input">Admin password</label>
+  <input id="admin-pass-input" type="password" autocomplete="off" placeholder="Enter the admin password">
+  <div class="actions">
+    <button class="btn btn-secondary" onclick="adminModal.close()">Cancel</button>
+    <button class="btn btn-primary" id="admin-unlock">Unlock</button>
+  </div>
+</dialog>
 
 <dialog id="modal">
   <h2 id="modal-title" style="font-size:20px;font-weight:600;margin-bottom:8px"></h2>
@@ -330,6 +346,16 @@ async function loadConfig() {
   renderQuestions();
   $("endline").value = c.end_call_line;
   showAIUsage(c.ai_usage);
+  showJDStatus(c.jd_text);
+}
+function showJDStatus(jdText) {
+  const el = $("jd-status");
+  if (jdText && jdText.trim()) {
+    el.textContent = `✓ Job description on file (${jdText.length.toLocaleString()} characters) — the agent can answer role questions from it.`;
+    el.style.display = "block";
+  } else {
+    el.style.display = "none";
+  }
 }
 function showAIUsage(usage) {
   const display = $("ai-usage-display");
@@ -358,12 +384,6 @@ async function saveConfig() {
     end_call_line: $("endline").value,
   });
 }
-$("save-config").onclick = async () => {
-  try {
-    await saveConfig();
-    toast("Interview config saved");
-  } catch (e) { toast(e.message, true); }
-};
 $("reset-all").onclick = async () => {
   if (!confirm("Reset company info, questions, and all candidates? This cannot be undone.")) return;
   try {
@@ -374,9 +394,10 @@ $("reset-all").onclick = async () => {
     $("endline").value = "Thank you for your time today. Our team will review and be in touch. Goodbye!";
     $("jd-text").value = "";
     $("generate-questions").disabled = true;
-    questionsList = [];
+    questionsList = ["Tell me something about yourself."];
     renderQuestions();
     $("ai-usage-display").style.display = "none";
+    $("jd-status").style.display = "none";
     toast("All data cleared");
   } catch (e) { toast(e.message, true); }
 };
@@ -436,15 +457,20 @@ $("jd-file").onchange = async (e) => {
   btn.disabled = true;
   btn.textContent = "Reading PDF…";
   try {
-    const r = await fetch("/api/questions/generate-from-pdf", { method: "POST", body: formData });
+    // Upload validates the JD and populates company/role/JD text. Question generation
+    // only happens on the explicit "Generate Questions with AI" button.
+    const r = await fetch("/api/jd/upload-pdf", { method: "POST", body: formData });
     if (!r.ok) {
       const err = await r.json();
       throw new Error(err.detail || "Failed to read PDF");
     }
     const data = await r.json();
-    questionsList = questionsList.concat(data.questions);
-    renderQuestions();
-    toast(`Added ${data.questions.length} AI-generated question${data.questions.length === 1 ? "" : "s"} from PDF`);
+    $("jd-text").value = data.jd_text;
+    if (data.company_name) $("company").value = data.company_name;
+    if (data.role_name) $("role").value = data.role_name;
+    $("generate-questions").disabled = false;
+    showJDStatus(data.jd_text);
+    toast("JD validated — company and role populated. Use ✨ Generate to create questions.");
   } catch (e) {
     toast(e.message, true);
   } finally {
@@ -464,7 +490,10 @@ $("generate-questions").onclick = async () => {
     questionsList = questionsList.concat(r.questions);
     renderQuestions();
     const c = await api("/api/config");
+    if (c.company_name) $("company").value = c.company_name;
+    if (c.role_name) $("role").value = c.role_name;
     showAIUsage(c.ai_usage);
+    showJDStatus(c.jd_text);
     toast(`Added ${r.questions.length} AI-generated question${r.questions.length === 1 ? "" : "s"}`);
   } catch (e) {
     toast(e.message, true);
@@ -542,6 +571,16 @@ const PRICING = {
   CARTESIA_TTS_RATE_USD: 39.00,      // per 1,000,000 characters
   USD_TO_INR: 96.27
 };
+// Cost rows are keyed by the provider stamped into each call's usage record, so
+// historical calls keep the provider (and rate) they actually ran with.
+const STT_LABELS = {
+  "openrouter-whisper": "Whisper large-v3 (STT)",
+  "deepgram-nova": "Deepgram Nova 3 (STT)",  // no per-request cost from Deepgram -> n/a
+};
+const TTS_META = {
+  "cartesia-sonic": { label: "Cartesia Sonic 3.5 (TTS)", rate: PRICING.CARTESIA_TTS_RATE_USD },
+  "openai-tts": { label: "OpenAI gpt-4o-mini-tts (TTS)", rate: 12.00 },  // approx. of OpenAI's per-minute audio pricing
+};
 
 async function showTranscript(id) {
   try {
@@ -578,9 +617,11 @@ async function showInfo(id) {
     const twilioDurationMin = durSec ? durSec / 60 : 0;
     const twilioCost = twilioDurationMin * PRICING.TWILIO_OUTBOUND_RATE_USD;
 
-    // Calculate Cartesia TTS cost (per 1,000,000 characters)
-    const cartesiaTtsCharacters = tts.characters || 0;
-    const cartesiaTtsCost = (cartesiaTtsCharacters / 1000000) * PRICING.CARTESIA_TTS_RATE_USD;
+    // TTS cost from the character count and the stamped provider's rate
+    const ttsMeta = TTS_META[tts.provider] || TTS_META["cartesia-sonic"];
+    const sttLabel = STT_LABELS[stt.provider] || "Whisper (STT)";
+    const ttsCharacters = tts.characters || 0;
+    const ttsCost = (ttsCharacters / 1000000) * ttsMeta.rate;
     $("modal-title").textContent = `Call Details — ${esc(d.name)}`;
     $("modal-body").innerHTML = `
       <div class="detail-grid">
@@ -603,9 +644,9 @@ async function showInfo(id) {
       <table>
         <thead><tr><th>Service</th><th>Usage</th><th>Cost (USD / INR)</th></tr></thead>
         <tbody>
-          <tr><td>Whisper (STT)</td><td style="color:var(--text-2)">${(stt.seconds || 0).toFixed(1)}s audio · ${stt.calls || 0} call(s)</td><td>${fmtMoney(stt.cost_known ? stt.cost : null)}</td></tr>
-          <tr><td>Gemini 2.5 Flash (LLM)</td><td style="color:var(--text-2)">${llm.prompt_tokens || 0} prompt / ${llm.completion_tokens || 0} completion tokens</td><td>${fmtMoney(llm.cost_known ? llm.cost : null)}</td></tr>
-          <tr><td>Cartesia Sonic 3.5 (TTS)</td><td style="color:var(--text-2)">${cartesiaTtsCharacters.toLocaleString()} characters · ${tts.calls || 0} call(s)</td><td>${fmtMoney(cartesiaTtsCost)}</td></tr>
+          <tr><td>${esc(sttLabel)}</td><td style="color:var(--text-2)">${(stt.seconds || 0).toFixed(1)}s audio · ${stt.calls || 0} call(s)</td><td>${fmtMoney(stt.cost_known ? stt.cost : null)}</td></tr>
+          <tr><td>${esc(llm.model || "google/gemini-2.5-flash")} (LLM)</td><td style="color:var(--text-2)">${llm.prompt_tokens || 0} prompt / ${llm.completion_tokens || 0} completion tokens</td><td>${fmtMoney(llm.cost_known ? llm.cost : null)}</td></tr>
+          <tr><td>${esc(ttsMeta.label)}</td><td style="color:var(--text-2)">${ttsCharacters.toLocaleString()} characters · ${tts.calls || 0} call(s)</td><td>${fmtMoney(ttsCost)}</td></tr>
           ${jdParse ? `<tr><td>JD Parsing <span class="hint" style="margin:0">(one-time, shared)</span></td><td style="color:var(--text-2)">${jdParse.prompt_tokens || 0} prompt / ${jdParse.completion_tokens || 0} completion tokens</td><td>${fmtMoney(jdParse.cost)}</td></tr>` : ""}
           ${qGen ? `<tr><td>Question Generation <span class="hint" style="margin:0">(one-time, shared)</span></td><td style="color:var(--text-2)">${qGen.prompt_tokens || 0} prompt / ${qGen.completion_tokens || 0} completion tokens</td><td>${fmtMoney(qGen.cost)}</td></tr>` : ""}
           <tr style="border-top: 2px solid var(--border); font-weight: 600;"><td>Twilio Outbound Call</td><td style="color:var(--text-2)">${twilioDurationMin.toFixed(2)} min @ $${PRICING.TWILIO_OUTBOUND_RATE_USD}/min</td><td>${fmtMoney(twilioCost)}</td></tr>
@@ -616,8 +657,8 @@ async function showInfo(id) {
         Total AI tokens: ${totalTokens.toLocaleString()}
         <div style="margin-top:4px">Subtotal (AI + TTS): ${fmtMoney(d.total_known_cost)}</div>
         <div style="margin-top:4px">Twilio Cost: ${fmtMoney(twilioCost)}</div>
-        <div style="margin-top:4px"><strong>Total Call Cost: ${fmtMoney((d.total_known_cost || 0) + twilioCost + cartesiaTtsCost)}</strong></div>
-        <div class="hint" style="text-align:right;margin-top:8px">Cartesia TTS cost calculated from $${PRICING.CARTESIA_TTS_RATE_USD}/1M characters. Twilio cost calculated from $${PRICING.TWILIO_OUTBOUND_RATE_USD}/min. JD Parsing / Question Generation are one-time, shared across all candidates — not per-call costs.</div>
+        <div style="margin-top:4px"><strong>Total Call Cost: ${fmtMoney((d.total_known_cost || 0) + twilioCost + ttsCost)}</strong></div>
+        <div class="hint" style="text-align:right;margin-top:8px">TTS cost calculated from $${ttsMeta.rate}/1M characters (${esc(ttsMeta.label)}). Twilio cost calculated from $${PRICING.TWILIO_OUTBOUND_RATE_USD}/min. JD Parsing / Question Generation are one-time, shared across all candidates — not per-call costs.</div>
       </div>
     `;
     modal.showModal();
@@ -630,34 +671,76 @@ function settingsTag(key, isDefault) {
   el.className = "tag " + (isDefault ? "default" : "modified");
   el.textContent = isDefault ? "DEFAULT" : "MODIFIED";
 }
+function fillProviderSelect(id, providers, current) {
+  $(id).innerHTML = providers.map(p =>
+    `<option value="${esc(p.id)}"${p.id === current ? " selected" : ""}${p.configured ? "" : " disabled"}>` +
+    `${esc(p.label)}${p.configured ? "" : " — key missing in .env"}</option>`
+  ).join("");
+}
 async function loadSettings() {
   const s = await api("/api/settings");
   const sel = $("set-llm-model");
   sel.innerHTML = s.vetted_models.map(m =>
     `<option value="${esc(m.id)}"${m.id === s.settings.llm_model ? " selected" : ""}>${esc(m.label)}</option>`
   ).join("");
+  fillProviderSelect("set-stt-provider", s.vetted_stt_providers, s.settings.stt_provider);
+  fillProviderSelect("set-tts-provider", s.vetted_tts_providers, s.settings.tts_provider);
   $("set-prompt-template").value = s.settings.prompt_template;
   $("set-extra-instructions").value = s.settings.extra_instructions;
   $("locked-protocol").textContent = s.locked_protocol;
-  $("admin-pass-row").style.display = s.admin_required ? "block" : "none";
   settingsTag("llm-model", s.is_default.llm_model);
+  settingsTag("stt-provider", s.is_default.stt_provider);
+  settingsTag("tts-provider", s.is_default.tts_provider);
   settingsTag("prompt-template", s.is_default.prompt_template);
   settingsTag("extra-instructions", s.is_default.extra_instructions);
 }
+// Admin access: the settings card stays hidden until the gear icon flow verifies the
+// password (kept in memory for this page load only — never persisted client-side).
+let adminPass = "";
+const adminModal = $("admin-modal");
 async function settingsPost(path, body) {
   const r = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Admin-Pass": $("admin-pass").value },
+    headers: { "Content-Type": "application/json", "X-Admin-Pass": adminPass },
     body: JSON.stringify(body),
   });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.detail || r.statusText);
   return data;
 }
+async function revealSettings() {
+  await loadSettings();
+  $("settings-section").style.display = "block";
+  $("settings-section").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+$("settings-gear").onclick = async () => {
+  const section = $("settings-section");
+  if (section.style.display !== "none") {  // toggle closed
+    section.style.display = "none";
+    return;
+  }
+  try {
+    const s = await api("/api/settings");
+    if (!s.admin_required) { await revealSettings(); return; }
+    $("admin-pass-input").value = "";
+    adminModal.showModal();
+  } catch (e) { toast(e.message, true); }
+};
+$("admin-unlock").onclick = async () => {
+  const pass = $("admin-pass-input").value;
+  const r = await fetch("/api/settings/verify-admin", { method: "POST", headers: { "X-Admin-Pass": pass } });
+  if (!r.ok) { toast("Incorrect admin password", true); return; }
+  adminPass = pass;
+  adminModal.close();
+  await revealSettings();
+};
+$("admin-pass-input").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $("admin-unlock").click(); } });
 $("save-settings").onclick = async () => {
   try {
     await settingsPost("/api/settings", {
       llm_model: $("set-llm-model").value,
+      stt_provider: $("set-stt-provider").value,
+      tts_provider: $("set-tts-provider").value,
       prompt_template: $("set-prompt-template").value,
       extra_instructions: $("set-extra-instructions").value,
     });
@@ -675,7 +758,6 @@ $("reset-settings").onclick = async () => {
 };
 
 loadConfig().catch(() => {});
-loadSettings().catch(() => {});
 poll();
 setInterval(poll, 2000);
 </script>

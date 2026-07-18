@@ -21,6 +21,18 @@ logger = logging.getLogger("settings")
 
 SETTINGS_PATH = os.environ.get("SETTINGS_PATH", "settings.json")
 
+# Providers verified live against their APIs (Phase 2). "key_env" names the .env
+# credential each needs; selection is rejected while that key is absent so a missing
+# credential can never be discovered mid-call.
+VETTED_STT_PROVIDERS = [
+    {"id": "openrouter-whisper", "label": "Whisper large-v3 via OpenRouter (default)", "key_env": "OPENROUTER_API_KEY"},
+    {"id": "deepgram-nova", "label": "Deepgram Nova 3 — telephony-tuned", "key_env": "DEEPGRAM_API_KEY"},
+]
+VETTED_TTS_PROVIDERS = [
+    {"id": "cartesia-sonic", "label": "Cartesia Sonic 3.5 (default)", "key_env": "CARTESIA_API_KEY"},
+    {"id": "openai-tts", "label": "OpenAI gpt-4o-mini-tts", "key_env": "OPENAI_API_KEY"},
+]
+
 # Each entry verified live on OpenRouter: model exists and supports response_format
 # (JSON mode), which the action contract requires. Keep this list curated — an
 # arbitrary model string that ignores JSON mode would break every call turn.
@@ -107,6 +119,8 @@ answer you. Only use "end_call" once they have already answered such a question.
 
 DEFAULT_SETTINGS = {
     "llm_model": "google/gemini-2.5-flash",
+    "stt_provider": "openrouter-whisper",
+    "tts_provider": "cartesia-sonic",
     "prompt_template": DEFAULT_PROMPT_TEMPLATE,
     "extra_instructions": "",
 }
@@ -141,6 +155,32 @@ def llm_model() -> str:
     return get()["llm_model"]
 
 
+def stt_provider() -> str:
+    return get()["stt_provider"]
+
+
+def tts_provider() -> str:
+    return get()["tts_provider"]
+
+
+def provider_status(vetted: list[dict]) -> list[dict]:
+    """Vetted list annotated with whether each provider's .env key is present.
+    Key *presence* only — the key material itself never leaves the server."""
+    return [
+        {"id": p["id"], "label": p["label"], "configured": bool(os.environ.get(p["key_env"], ""))}
+        for p in vetted
+    ]
+
+
+def _validate_provider(kind: str, value: str, vetted: list[dict]) -> str:
+    match = next((p for p in vetted if p["id"] == value), None)
+    if not match:
+        raise ValueError(f"Unknown {kind} provider {value!r} — choose one of the vetted providers.")
+    if not os.environ.get(match["key_env"], ""):
+        raise ValueError(f"{match['label']} needs {match['key_env']} in .env before it can be selected.")
+    return value
+
+
 def is_default() -> dict:
     s = get()
     return {k: s[k] == DEFAULT_SETTINGS[k] for k in DEFAULT_SETTINGS}
@@ -173,6 +213,10 @@ def update(partial: dict) -> dict:
         if model not in {m["id"] for m in VETTED_LLM_MODELS}:
             raise ValueError(f"Unknown model {model!r} — choose one of the vetted models.")
         clean["llm_model"] = model
+    if "stt_provider" in partial:
+        clean["stt_provider"] = _validate_provider("STT", partial["stt_provider"], VETTED_STT_PROVIDERS)
+    if "tts_provider" in partial:
+        clean["tts_provider"] = _validate_provider("TTS", partial["tts_provider"], VETTED_TTS_PROVIDERS)
     if "prompt_template" in partial:
         err = validate_template(partial["prompt_template"])
         if err:
@@ -201,9 +245,22 @@ def reset() -> dict:
         return dict(_settings)
 
 
-def build_system_prompt(company_name: str, candidate_name: str, questions: list[str]) -> str:
-    """Editable template (formatted) + optional extra instructions + locked protocol.
-    With default settings the output is byte-identical to the v0.1.0 hardcoded prompt."""
+JD_CONTEXT_MAX_CHARS = 4000  # bound per-turn prompt tokens/latency; long JDs are truncated
+
+JD_CONTEXT_HEADER = """JOB DESCRIPTION CONTEXT:
+The full job description for this role is below. When the candidate asks about the role,
+its responsibilities, or its requirements, answer briefly and accurately FROM this
+description — answering from it is not inventing facts. If it does not cover their
+question (salary, benefits, hiring process), keep deferring to the recruiting team as
+instructed above."""
+
+
+def build_system_prompt(
+    company_name: str, candidate_name: str, questions: list[str], job_description: str = ""
+) -> str:
+    """Editable template (formatted) + optional JD context + optional extra instructions
+    + locked protocol. With default settings and no JD on file, the output is
+    byte-identical to the v0.1.0 hardcoded prompt."""
     s = get()
     numbered = "\n".join(f"{i+1}. {q}" for i, q in enumerate(questions))
     try:
@@ -216,9 +273,18 @@ def build_system_prompt(company_name: str, candidate_name: str, questions: list[
         body = DEFAULT_PROMPT_TEMPLATE.format(
             company_name=company_name, candidate_name=candidate_name, questions=numbered
         )
+    jd = (job_description or "").strip()
+    if jd:
+        if len(jd) > JD_CONTEXT_MAX_CHARS:
+            logger.info("JD context truncated from %d to %d chars", len(jd), JD_CONTEXT_MAX_CHARS)
+            jd = jd[:JD_CONTEXT_MAX_CHARS]
+        body += "\n\n" + JD_CONTEXT_HEADER + "\n---\n" + jd + "\n---"
     extra = s["extra_instructions"].strip()
     if extra:
-        body += "\n\nADDITIONAL INSTRUCTIONS:\n" + extra
+        # Overrides conflicting conduct rules by design: e.g. the default prompt deflects
+        # salary questions to the recruiting team, but an admin can supply a salary band
+        # here and the agent will use it. With no guidance given, deflection stands.
+        body += "\n\nADDITIONAL INSTRUCTIONS (these override any conflicting rules above):\n" + extra
     return body + "\n\n" + PROMPT_PROTOCOL
 
 

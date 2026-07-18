@@ -34,6 +34,10 @@ STT_MODEL = "openai/whisper-large-v3"  # has 2 backing providers (Together + Gro
 CARTESIA_MODEL = "sonic-3.5"
 CARTESIA_VOICE_ID = "79a125e8-cd45-4c13-8a67-188112f4dd22"
 CARTESIA_PCM_RATE = 24_000
+DEEPGRAM_STT_MODEL = "nova-3"
+OPENAI_TTS_MODEL = "gpt-4o-mini-tts"
+OPENAI_TTS_VOICE = "alloy"
+OPENAI_PCM_RATE = 24_000
 
 _client = httpx.AsyncClient(
     base_url="https://openrouter.ai/api/v1",
@@ -47,6 +51,18 @@ _cartesia = httpx.AsyncClient(
         "X-API-Key": os.environ.get("CARTESIA_API_KEY", ""),
         "Cartesia-Version": "2024-06-10",
     },
+    timeout=45,
+)
+
+_deepgram = httpx.AsyncClient(
+    base_url="https://api.deepgram.com",
+    headers={"Authorization": f"Token {os.environ.get('DEEPGRAM_API_KEY', '')}"},
+    timeout=60,
+)
+
+_openai = httpx.AsyncClient(
+    base_url="https://api.openai.com",
+    headers={"Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY', '')}"},
     timeout=45,
 )
 
@@ -73,8 +89,15 @@ async def _retry(fn, attempts: int = 3):
 
 @traceable(name="stt_transcribe", run_type="tool")
 async def transcribe(wav: bytes) -> dict:
-    """Returns {"text": str, "seconds": float|None, "cost": float|None} — cost/seconds
-    come straight from OpenRouter's transcription usage block (real, not estimated)."""
+    """Returns {"text": str, "seconds": float|None, "cost": float|None}. Dispatches on
+    the settings STT provider; the default path is the pre-settings code unchanged."""
+    if settings.stt_provider() == "deepgram-nova":
+        return await _transcribe_deepgram(wav)
+    return await _transcribe_openrouter(wav)
+
+
+async def _transcribe_openrouter(wav: bytes) -> dict:
+    """OpenRouter Whisper — cost/seconds come straight from its usage block (real)."""
 
     async def go():
         r = await _client.post(
@@ -92,6 +115,28 @@ async def transcribe(wav: bytes) -> dict:
             "text": data.get("text", "").strip(),
             "seconds": usage.get("seconds"),
             "cost": usage.get("cost"),
+        }
+
+    return await _retry(go)
+
+
+async def _transcribe_deepgram(wav: bytes) -> dict:
+    """Deepgram prerecorded API. Returns cost=None: Deepgram doesn't report cost per
+    request and its per-minute rate isn't pinned in this repo yet (see docs/backlog.md),
+    so the UI shows n/a rather than a made-up number."""
+
+    async def go():
+        r = await _deepgram.post(
+            f"/v1/listen?model={DEEPGRAM_STT_MODEL}&language=en",
+            content=wav,
+            headers={"Content-Type": "audio/wav"},
+        )
+        r.raise_for_status()
+        data = r.json()
+        return {
+            "text": data["results"]["channels"][0]["alternatives"][0]["transcript"].strip(),
+            "seconds": data.get("metadata", {}).get("duration"),
+            "cost": None,
         }
 
     return await _retry(go)
@@ -148,8 +193,14 @@ def _parse_json(content: str) -> dict:
 
 @traceable(name="tts_speak", run_type="tool")
 async def speak(text: str) -> bytes:
-    """Text -> 8kHz mu-law bytes ready for a Twilio media stream, via Cartesia Sonic 3.5."""
+    """Text -> 8kHz mu-law bytes ready for a Twilio media stream. Dispatches on the
+    settings TTS provider; the default path is the pre-settings Cartesia code unchanged."""
+    if settings.tts_provider() == "openai-tts":
+        return await _speak_openai(text)
+    return await _speak_cartesia(text)
 
+
+async def _speak_cartesia(text: str) -> bytes:
     async def go():
         r = await _cartesia.post(
             "/tts/bytes",
@@ -171,12 +222,31 @@ async def speak(text: str) -> bytes:
     return pcm_to_ulaw(resample(pcm, CARTESIA_PCM_RATE, 8000))
 
 
+async def _speak_openai(text: str) -> bytes:
+    async def go():
+        r = await _openai.post(
+            "/v1/audio/speech",
+            json={
+                "model": OPENAI_TTS_MODEL,
+                "voice": OPENAI_TTS_VOICE,
+                "input": text,
+                "response_format": "pcm",  # 24kHz mono s16le
+            },
+        )
+        r.raise_for_status()
+        return r.content
+
+    pcm = await _retry(go)
+    return pcm_to_ulaw(resample(pcm, OPENAI_PCM_RATE, 8000))
+
+
 JD_PARSE_SYSTEM_PROMPT = """You review a piece of text and decide whether it is a job description
 (JD) — text describing an open role a company is hiring for (job title, responsibilities,
-required skills/qualifications, or "about the role" language).
+required skills/qualifications, or "about the role" language). If it is one, also extract
+the hiring company's name and the role/job title exactly as stated — null when not stated.
 
 Respond ONLY with JSON:
-{"is_job_description": true|false, "reason": "<short reason, required if false, else empty>"}"""
+{"is_job_description": true|false, "reason": "<short reason, required if false, else empty>", "company_name": "<company name or null>", "role_name": "<job title or null>"}"""
 
 QUESTION_GEN_SYSTEM_PROMPT = """You are given a job description. Write 5 to 8 clear interview
 questions tailored to the specific responsibilities and skills in it. Each must be answerable
@@ -212,6 +282,8 @@ async def parse_jd(jd_text: str) -> tuple[dict, dict]:
         result = _parse_json_object(content)
         result.setdefault("is_job_description", False)
         result.setdefault("reason", "")
+        result.setdefault("company_name", None)
+        result.setdefault("role_name", None)
         return result, {
             "prompt_tokens": usage.get("prompt_tokens"),
             "completion_tokens": usage.get("completion_tokens"),
