@@ -120,12 +120,13 @@ class CallSession:
         self.pending = None        # (next_index, next_followups) committed on clean turn end
         self._last_agent_idx = None
         self._last_hist_idx = None
-        # usage/cost tracking (STT + LLM cost is real, from OpenRouter; TTS chars are a proxy
-        # since Cartesia's /tts/bytes doesn't return cost)
+        # usage/cost tracking (STT + LLM cost is real when the provider reports it; TTS
+        # chars are a proxy). Provider/model stamped per call so records stay attributable
+        # after a settings change — the benchmarking hook for provider comparisons.
         self.usage = {
-            "stt": {"calls": 0, "seconds": 0.0, "cost": 0.0, "cost_known": True},
-            "llm": {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost": 0.0, "cost_known": True},
-            "tts": {"calls": 0, "characters": 0},
+            "stt": {"provider": settings.stt_provider(), "calls": 0, "seconds": 0.0, "cost": 0.0, "cost_known": True},
+            "llm": {"model": settings.llm_model(), "calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost": 0.0, "cost_known": True},
+            "tts": {"provider": settings.tts_provider(), "calls": 0, "characters": 0},
         }
 
     # ---- outbound pipeline (single writer) ------------------------------

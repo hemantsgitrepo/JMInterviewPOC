@@ -89,6 +89,8 @@ class JDIn(BaseModel):
 
 class SettingsIn(BaseModel):
     llm_model: str | None = None
+    stt_provider: str | None = None
+    tts_provider: str | None = None
     prompt_template: str | None = None
     extra_instructions: str | None = None
 
@@ -124,6 +126,8 @@ def get_settings():
         "defaults": settings.DEFAULT_SETTINGS,
         "is_default": settings.is_default(),
         "vetted_models": settings.VETTED_LLM_MODELS,
+        "vetted_stt_providers": settings.provider_status(settings.VETTED_STT_PROVIDERS),
+        "vetted_tts_providers": settings.provider_status(settings.VETTED_TTS_PROVIDERS),
         "locked_protocol": settings.PROMPT_PROTOCOL,
         "admin_required": settings.admin_required(),
     }
