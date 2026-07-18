@@ -175,6 +175,8 @@
   </svg>
   <div class="wordmark">Jobmanch<span>.ai</span></div>
   <div class="app-label">AI Interview Caller</div>
+  <button class="btn btn-ghost" id="settings-gear" title="Settings (admin)"
+    style="margin-left:auto;font-size:20px;padding:8px 12px" aria-label="Open settings">⚙️</button>
 </header>
 
 <main>
@@ -246,7 +248,7 @@
     </div>
   </section>
 
-  <section class="card status-card" aria-labelledby="settings-h">
+  <section class="card status-card" id="settings-section" aria-labelledby="settings-h" style="display:none">
     <h2 id="settings-h">Settings <span class="hint" style="display:inline;font-weight:400">(admin)</span></h2>
     <div class="hint" style="margin-top:0">Runtime configuration: LLM model and interviewer persona. The current
       production configuration is the default — fields marked <span class="tag default">DEFAULT</span> are unchanged.
@@ -281,17 +283,22 @@
       <div id="locked-protocol" class="protocol-view"></div>
     </details>
 
-    <div id="admin-pass-row" style="display:none">
-      <label for="admin-pass">Admin password</label>
-      <input id="admin-pass" type="password" autocomplete="off" placeholder="Required to save changes">
-    </div>
-
     <div class="actions">
       <button class="btn btn-secondary" id="save-settings">Save Settings</button>
       <button class="btn btn-danger btn-small btn-push-right" id="reset-settings">Restore Defaults</button>
     </div>
   </section>
 </main>
+
+<dialog id="admin-modal">
+  <h2 style="font-size:18px;font-weight:600;margin-bottom:8px">Settings access</h2>
+  <label for="admin-pass-input">Admin password</label>
+  <input id="admin-pass-input" type="password" autocomplete="off" placeholder="Enter the admin password">
+  <div class="actions">
+    <button class="btn btn-secondary" onclick="adminModal.close()">Cancel</button>
+    <button class="btn btn-primary" id="admin-unlock">Unlock</button>
+  </div>
+</dialog>
 
 <dialog id="modal">
   <h2 id="modal-title" style="font-size:20px;font-weight:600;margin-bottom:8px"></h2>
@@ -387,7 +394,7 @@ $("reset-all").onclick = async () => {
     $("endline").value = "Thank you for your time today. Our team will review and be in touch. Goodbye!";
     $("jd-text").value = "";
     $("generate-questions").disabled = true;
-    questionsList = [];
+    questionsList = ["Tell me something about yourself."];
     renderQuestions();
     $("ai-usage-display").style.display = "none";
     $("jd-status").style.display = "none";
@@ -681,23 +688,53 @@ async function loadSettings() {
   $("set-prompt-template").value = s.settings.prompt_template;
   $("set-extra-instructions").value = s.settings.extra_instructions;
   $("locked-protocol").textContent = s.locked_protocol;
-  $("admin-pass-row").style.display = s.admin_required ? "block" : "none";
   settingsTag("llm-model", s.is_default.llm_model);
   settingsTag("stt-provider", s.is_default.stt_provider);
   settingsTag("tts-provider", s.is_default.tts_provider);
   settingsTag("prompt-template", s.is_default.prompt_template);
   settingsTag("extra-instructions", s.is_default.extra_instructions);
 }
+// Admin access: the settings card stays hidden until the gear icon flow verifies the
+// password (kept in memory for this page load only — never persisted client-side).
+let adminPass = "";
+const adminModal = $("admin-modal");
 async function settingsPost(path, body) {
   const r = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Admin-Pass": $("admin-pass").value },
+    headers: { "Content-Type": "application/json", "X-Admin-Pass": adminPass },
     body: JSON.stringify(body),
   });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.detail || r.statusText);
   return data;
 }
+async function revealSettings() {
+  await loadSettings();
+  $("settings-section").style.display = "block";
+  $("settings-section").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+$("settings-gear").onclick = async () => {
+  const section = $("settings-section");
+  if (section.style.display !== "none") {  // toggle closed
+    section.style.display = "none";
+    return;
+  }
+  try {
+    const s = await api("/api/settings");
+    if (!s.admin_required) { await revealSettings(); return; }
+    $("admin-pass-input").value = "";
+    adminModal.showModal();
+  } catch (e) { toast(e.message, true); }
+};
+$("admin-unlock").onclick = async () => {
+  const pass = $("admin-pass-input").value;
+  const r = await fetch("/api/settings/verify-admin", { method: "POST", headers: { "X-Admin-Pass": pass } });
+  if (!r.ok) { toast("Incorrect admin password", true); return; }
+  adminPass = pass;
+  adminModal.close();
+  await revealSettings();
+};
+$("admin-pass-input").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $("admin-unlock").click(); } });
 $("save-settings").onclick = async () => {
   try {
     await settingsPost("/api/settings", {
@@ -721,7 +758,6 @@ $("reset-settings").onclick = async () => {
 };
 
 loadConfig().catch(() => {});
-loadSettings().catch(() => {});
 poll();
 setInterval(poll, 2000);
 </script>

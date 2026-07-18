@@ -148,6 +148,14 @@ def reset_settings(request: Request):
     return {"ok": True, "settings": settings.reset()}
 
 
+@app.post("/api/settings/verify-admin")
+def verify_admin(request: Request):
+    """Gate for revealing the Settings UI: 200 iff the supplied password is valid
+    (or no ADMIN_PASS is configured, mirroring the auth-optional local-dev mode)."""
+    _require_admin(request)
+    return {"ok": True}
+
+
 async def _validate_and_store_jd(text: str) -> dict:
     """Validates the text as a JD, stores it for prompt grounding, and auto-populates
     company/role when the JD states them. Never generates questions — that only happens
@@ -242,7 +250,7 @@ async def end_call():
 def reset_all():
     if store.session["running"]:
         raise HTTPException(409, "Cannot reset while a session is running")
-    store.config["questions"] = []
+    store.config["questions"] = ["Tell me something about yourself."]
     store.config["jd_text"] = ""
     store.config["ai_usage"] = {
         "jd_text": None,
