@@ -135,6 +135,18 @@
   .ai-usage { background: rgba(0, 217, 255, 0.05); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; margin-bottom: 16px; font-size: 13px; }
   .ai-usage .k { font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-2); margin-bottom: 4px; }
   .ai-usage .v { color: var(--cyan); font-weight: 500; }
+  select {
+    width: 100%; background: var(--bg-input); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 12px 16px; font: inherit;
+  }
+  select:focus { outline: none; border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(0, 217, 255, 0.1); }
+  .tag { display: inline-block; margin-left: 8px; padding: 2px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; vertical-align: middle; }
+  .tag.default { background: rgba(16, 185, 129, 0.15); color: var(--green); border: 1px solid rgba(16, 185, 129, 0.4); }
+  .tag.modified { background: rgba(245, 158, 11, 0.15); color: var(--orange); border: 1px solid rgba(245, 158, 11, 0.4); }
+  .protocol-view { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; margin-top: 8px; font: 12px/1.5 ui-monospace, monospace; white-space: pre-wrap; color: var(--text-2); max-height: 260px; overflow-y: auto; }
+  details.settings-protocol summary { cursor: pointer; color: var(--text-2); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 16px; }
+  textarea.mono { font: 12px/1.5 ui-monospace, monospace; }
 
   @media (max-width: 640px) {
     header { padding: 0 16px; gap: 10px; }
@@ -230,6 +242,44 @@
         <thead><tr><th>Candidate</th><th>Phone</th><th>Status</th><th>Duration</th><th>Transcript</th><th>Actions</th></tr></thead>
         <tbody id="rows"><tr><td colspan="6" class="empty">No candidates yet — save a list above.</td></tr></tbody>
       </table>
+    </div>
+  </section>
+
+  <section class="card status-card" aria-labelledby="settings-h">
+    <h2 id="settings-h">Settings <span class="hint" style="display:inline;font-weight:400">(admin)</span></h2>
+    <div class="hint" style="margin-top:0">Runtime configuration: LLM model and interviewer persona. The current
+      production configuration is the default — fields marked <span class="tag default">DEFAULT</span> are unchanged.
+      API keys are never stored or shown here.</div>
+
+    <label for="set-llm-model">LLM model (live call turns + question generation)
+      <span id="llm-model-tag" class="tag default">DEFAULT</span></label>
+    <select id="set-llm-model"></select>
+
+    <label for="set-prompt-template">Persona &amp; conduct prompt
+      <span id="prompt-template-tag" class="tag default">DEFAULT</span></label>
+    <textarea id="set-prompt-template" class="mono" rows="14" spellcheck="false"></textarea>
+    <div class="hint">Placeholders: <code>{company_name}</code>, <code>{candidate_name}</code>,
+      <code>{questions}</code> (required). The JSON response protocol below is locked and always appended —
+      persona edits cannot break the call flow.</div>
+
+    <label for="set-extra-instructions">Supplementary instructions &amp; guardrails
+      <span id="extra-instructions-tag" class="tag default">DEFAULT</span></label>
+    <textarea id="set-extra-instructions" class="mono" rows="3" spellcheck="false"
+      placeholder="Optional. Appended to the prompt, e.g. compliance lines or extra behavioral rules."></textarea>
+
+    <details class="settings-protocol">
+      <summary>View locked response protocol (not editable)</summary>
+      <div id="locked-protocol" class="protocol-view"></div>
+    </details>
+
+    <div id="admin-pass-row" style="display:none">
+      <label for="admin-pass">Admin password</label>
+      <input id="admin-pass" type="password" autocomplete="off" placeholder="Required to save changes">
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-secondary" id="save-settings">Save Settings</button>
+      <button class="btn btn-danger btn-small btn-push-right" id="reset-settings">Restore Defaults</button>
     </div>
   </section>
 </main>
@@ -574,7 +624,58 @@ async function showInfo(id) {
   } catch (e) { toast(e.message, true); }
 }
 
+// ---- settings (admin) ----
+function settingsTag(key, isDefault) {
+  const el = $(key + "-tag");
+  el.className = "tag " + (isDefault ? "default" : "modified");
+  el.textContent = isDefault ? "DEFAULT" : "MODIFIED";
+}
+async function loadSettings() {
+  const s = await api("/api/settings");
+  const sel = $("set-llm-model");
+  sel.innerHTML = s.vetted_models.map(m =>
+    `<option value="${esc(m.id)}"${m.id === s.settings.llm_model ? " selected" : ""}>${esc(m.label)}</option>`
+  ).join("");
+  $("set-prompt-template").value = s.settings.prompt_template;
+  $("set-extra-instructions").value = s.settings.extra_instructions;
+  $("locked-protocol").textContent = s.locked_protocol;
+  $("admin-pass-row").style.display = s.admin_required ? "block" : "none";
+  settingsTag("llm-model", s.is_default.llm_model);
+  settingsTag("prompt-template", s.is_default.prompt_template);
+  settingsTag("extra-instructions", s.is_default.extra_instructions);
+}
+async function settingsPost(path, body) {
+  const r = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Admin-Pass": $("admin-pass").value },
+    body: JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || r.statusText);
+  return data;
+}
+$("save-settings").onclick = async () => {
+  try {
+    await settingsPost("/api/settings", {
+      llm_model: $("set-llm-model").value,
+      prompt_template: $("set-prompt-template").value,
+      extra_instructions: $("set-extra-instructions").value,
+    });
+    await loadSettings();
+    toast("Settings saved");
+  } catch (e) { toast(e.message, true); }
+};
+$("reset-settings").onclick = async () => {
+  if (!confirm("Restore all settings to the production defaults?")) return;
+  try {
+    await settingsPost("/api/settings/reset", {});
+    await loadSettings();
+    toast("Settings restored to defaults");
+  } catch (e) { toast(e.message, true); }
+};
+
 loadConfig().catch(() => {});
+loadSettings().catch(() => {});
 poll();
 setInterval(poll, 2000);
 </script>
