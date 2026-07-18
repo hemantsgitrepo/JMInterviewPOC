@@ -8,3 +8,6 @@ __pycache__/
 # Generated at runtime — real call data, not source
 transcripts/*.json
 recordings/*.mp3
+
+# Runtime settings state (admin edits via the Settings UI) — defaults live in settings.py
+settings.json
