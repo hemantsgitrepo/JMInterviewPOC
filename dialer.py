@@ -52,7 +52,14 @@ def _create_call(cand: dict):
         to=cand["phone"],
         from_=FROM_NUMBER,
         twiml=twiml,
+        # Async AMD: sync AMD holds the TwiML (and the opening line) until the
+        # machine/human verdict — a silent answerer meant 10+ s of dead air. Async
+        # starts the media stream at answer and posts AnsweredBy to the status
+        # callback, which already hangs up on a voicemail verdict whenever it lands.
         machine_detection="Enable",
+        async_amd=True,
+        async_amd_status_callback=f"https://{PUBLIC_HOST}/twilio/status",
+        async_amd_status_callback_method="POST",
         timeout=RING_TIMEOUT,
         time_limit=CALL_TIME_LIMIT,
         status_callback=f"https://{PUBLIC_HOST}/twilio/status",
