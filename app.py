@@ -24,6 +24,7 @@ from pypdf import PdfReader
 
 import dialer
 import models
+import settings
 import store
 from call import handle_media_ws
 
@@ -86,6 +87,12 @@ class JDIn(BaseModel):
     jd_text: str
 
 
+class SettingsIn(BaseModel):
+    llm_model: str | None = None
+    prompt_template: str | None = None
+    extra_instructions: str | None = None
+
+
 @app.get("/")
 def index():
     return FileResponse("static/index.html")
@@ -103,6 +110,38 @@ def save_config(cfg: ConfigIn):
         raise HTTPException(400, "At least one question is required")
     store.config.update(cfg.model_dump() | {"questions": questions})
     return {"ok": True}
+
+
+def _require_admin(request: Request):
+    if not settings.check_admin(request.headers.get("x-admin-pass", "")):
+        raise HTTPException(403, "Admin password required (X-Admin-Pass header)")
+
+
+@app.get("/api/settings")
+def get_settings():
+    return {
+        "settings": settings.get(),
+        "defaults": settings.DEFAULT_SETTINGS,
+        "is_default": settings.is_default(),
+        "vetted_models": settings.VETTED_LLM_MODELS,
+        "locked_protocol": settings.PROMPT_PROTOCOL,
+        "admin_required": settings.admin_required(),
+    }
+
+
+@app.post("/api/settings")
+def update_settings(body: SettingsIn, request: Request):
+    _require_admin(request)
+    try:
+        return {"ok": True, "settings": settings.update(body.model_dump(exclude_none=True))}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/settings/reset")
+def reset_settings(request: Request):
+    _require_admin(request)
+    return {"ok": True, "settings": settings.reset()}
 
 
 async def _parse_and_generate(text: str) -> list[str]:

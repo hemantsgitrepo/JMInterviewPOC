@@ -11,6 +11,7 @@ import re
 import httpx
 from dotenv import load_dotenv
 
+import settings
 from audio import pcm_to_ulaw, resample
 
 load_dotenv()
@@ -29,7 +30,7 @@ else:
 
 STT_MODEL = "openai/whisper-large-v3"  # has 2 backing providers (Together + Groq) on
 # OpenRouter, unlike the "-turbo" variant which is Groq-only and hard-fails on Groq 429s
-LLM_MODEL = "google/gemini-2.5-flash"
+# LLM model is settings-driven (settings.llm_model()); default = google/gemini-2.5-flash
 CARTESIA_MODEL = "sonic-3.5"
 CARTESIA_VOICE_ID = "79a125e8-cd45-4c13-8a67-188112f4dd22"
 CARTESIA_PCM_RATE = 24_000
@@ -106,7 +107,7 @@ async def next_turn(system: str, messages: list[dict]) -> tuple[dict, dict]:
         r = await _client.post(
             "/chat/completions",
             json={
-                "model": LLM_MODEL,
+                "model": settings.llm_model(),
                 "messages": [{"role": "system", "content": system}] + messages,
                 "response_format": {"type": "json_object"},
                 "temperature": 0.4,
@@ -194,7 +195,7 @@ async def parse_jd(jd_text: str) -> tuple[dict, dict]:
         r = await _client.post(
             "/chat/completions",
             json={
-                "model": LLM_MODEL,
+                "model": settings.llm_model(),
                 "messages": [
                     {"role": "system", "content": JD_PARSE_SYSTEM_PROMPT},
                     {"role": "user", "content": jd_text},
@@ -229,7 +230,7 @@ async def generate_questions_from_jd(jd_text: str) -> tuple[list[str], dict]:
         r = await _client.post(
             "/chat/completions",
             json={
-                "model": LLM_MODEL,
+                "model": settings.llm_model(),
                 "messages": [
                     {"role": "system", "content": QUESTION_GEN_SYSTEM_PROMPT},
                     {"role": "user", "content": jd_text},
