@@ -44,11 +44,12 @@ session = {"running": False, "current": None, "call_done": None}
 # STT+LLM+TTS latency. Pre-synthesized by the dialer; empty in loopback (skipped).
 # The dialer appends None entries so sometimes no acknowledgment plays — a beat of
 # silence before answering is the most human backchannel of all.
-# FILLER_TTS_PROVIDER records which TTS provider the cached clips were synthesized
-# with, so a provider switch re-synthesizes them instead of mixing two voices.
+# FILLER_TTS_SIG records which TTS voice (provider + selected voice, see
+# models.tts_voice_signature) the cached clips were synthesized with, so a provider
+# OR voice-gender switch re-synthesizes them instead of mixing two voices.
 FILLER_PHRASES = ["Right.", "Okay.", "Sure.", "Alright.", "I see.", "Got it.", "Mm, okay.", "Mhm."]
 FILLER_ULAW: list[bytes | None] = []
-FILLER_TTS_PROVIDER: str | None = None
+FILLER_TTS_SIG: str | None = None
 
 
 def candidates_list() -> list[dict]:

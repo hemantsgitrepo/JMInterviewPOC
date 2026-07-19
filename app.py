@@ -91,6 +91,7 @@ class SettingsIn(BaseModel):
     llm_model: str | None = None
     stt_provider: str | None = None
     tts_provider: str | None = None
+    tts_voice_gender: str | None = None
     prompt_template: str | None = None
     extra_instructions: str | None = None
 

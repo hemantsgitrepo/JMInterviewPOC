@@ -58,7 +58,7 @@ settings._settings = None  # force reload from disk
 assert settings.get()["llm_model"] == "anthropic/claude-haiku-4.5", "reload lost the update"
 assert settings.is_default() == {
     "llm_model": False, "stt_provider": True, "tts_provider": True,
-    "prompt_template": True, "extra_instructions": True,
+    "tts_voice_gender": True, "prompt_template": True, "extra_instructions": True,
 }
 settings.reset()
 assert not os.path.exists("settings_test.json")
@@ -87,6 +87,27 @@ except ValueError as e:
     assert "NO_SUCH_KEY_SET" in str(e)
 finally:
     settings.VETTED_STT_PROVIDERS.pop()
+cleanup()
+
+# voice gender: default preserves each provider's original voice; female/male map
+# through models.TTS_VOICES; anything else is rejected
+import models  # noqa: E402  (offline: import only, no network)
+
+assert settings.tts_voice_gender() == "default"
+assert models._tts_voice("cartesia-sonic", models.CARTESIA_VOICE_ID) == models.CARTESIA_VOICE_ID
+sig_default = models.tts_voice_signature()
+settings.update({"tts_voice_gender": "male"})
+assert models._tts_voice("cartesia-sonic", models.CARTESIA_VOICE_ID) == models.TTS_VOICES["cartesia-sonic"]["male"]
+assert models._tts_voice("sarvam-bulbul", models.SARVAM_TTS_SPEAKER) == "shubh"
+assert models.tts_voice_signature() != sig_default, "gender change must change the voice signature (filler cache key)"
+settings.update({"tts_voice_gender": "female"})
+assert models._tts_voice("gnani-vachana", models.GNANI_TTS_VOICE) == "Kaveri"
+for bad_gender in ("neutral", "", "MALE"):
+    try:
+        settings.update({"tts_voice_gender": bad_gender})
+        raise AssertionError(f"accepted invalid voice gender {bad_gender!r}")
+    except ValueError:
+        pass
 cleanup()
 
 for bad_template, why in [

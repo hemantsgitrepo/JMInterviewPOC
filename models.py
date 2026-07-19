@@ -54,6 +54,41 @@ GNANI_TTS_VOICE = "Pranav"
 # before mu-law encoding — unlike Cartesia/OpenAI, which only emit 24kHz.
 TELEPHONY_RATE = 8000
 
+# Explicit female/male voice per TTS provider (settings "Agent voice"). The historical
+# per-provider defaults above are mixed-gender (Cartesia "British Lady" is female, Sarvam
+# shubh and Gnani Pranav are male), so gender "default" keeps them untouched rather than
+# pretending they share one. OpenAI publishes no gender labels; nova/onyx are the
+# conventional female-/male-sounding picks. Cartesia female is the original default voice;
+# male is "Grant - Friendly Support" (neutral American, support-tuned), verified live.
+TTS_VOICES = {
+    "cartesia-sonic": {"female": CARTESIA_VOICE_ID, "male": "d46abd1d-2d02-43e8-819f-51fb652c1c61"},
+    "openai-tts": {"female": "nova", "male": "onyx"},
+    "sarvam-bulbul": {"female": "ishita", "male": SARVAM_TTS_SPEAKER},
+    "gnani-vachana": {"female": "Kaveri", "male": GNANI_TTS_VOICE},
+}
+
+
+def _tts_voice(provider: str, default: str) -> str:
+    """Resolve the voice for a provider: the provider's original voice on "default",
+    else the mapped voice for the selected gender."""
+    gender = settings.tts_voice_gender()
+    if gender in ("female", "male"):
+        return TTS_VOICES.get(provider, {}).get(gender, default)
+    return default
+
+
+def tts_voice_signature() -> str:
+    """Identity of the audio the current TTS settings produce, for caches of
+    pre-synthesized clips (filler acks): same signature -> same voice."""
+    provider = settings.tts_provider()
+    defaults = {
+        "cartesia-sonic": CARTESIA_VOICE_ID,
+        "openai-tts": OPENAI_TTS_VOICE,
+        "sarvam-bulbul": SARVAM_TTS_SPEAKER,
+        "gnani-vachana": GNANI_TTS_VOICE,
+    }
+    return f"{provider}|{_tts_voice(provider, defaults.get(provider, ''))}"
+
 _client = httpx.AsyncClient(
     base_url="https://openrouter.ai/api/v1",
     headers={"Authorization": f"Bearer {os.environ.get('OPENROUTER_API_KEY', '')}"},
@@ -309,7 +344,7 @@ async def _speak_cartesia(text: str) -> bytes:
             json={
                 "transcript": text,
                 "model_id": CARTESIA_MODEL,
-                "voice": {"mode": "id", "id": CARTESIA_VOICE_ID},
+                "voice": {"mode": "id", "id": _tts_voice("cartesia-sonic", CARTESIA_VOICE_ID)},
                 "output_format": {
                     "container": "raw",
                     "encoding": "pcm_s16le",
@@ -330,7 +365,7 @@ async def _speak_openai(text: str) -> bytes:
             "/v1/audio/speech",
             json={
                 "model": OPENAI_TTS_MODEL,
-                "voice": OPENAI_TTS_VOICE,
+                "voice": _tts_voice("openai-tts", OPENAI_TTS_VOICE),
                 "input": text,
                 "response_format": "pcm",  # 24kHz mono s16le
             },
@@ -353,7 +388,7 @@ async def _speak_sarvam(text: str) -> bytes:
             json={
                 "text": text,
                 "model": SARVAM_TTS_MODEL,
-                "speaker": SARVAM_TTS_SPEAKER,
+                "speaker": _tts_voice("sarvam-bulbul", SARVAM_TTS_SPEAKER),
                 "target_language_code": INDIAN_ENGLISH,
                 "speech_sample_rate": TELEPHONY_RATE,
                 "output_audio_codec": "wav",
@@ -373,7 +408,7 @@ async def _speak_gnani(text: str) -> bytes:
             json={
                 "text": text,
                 "model": GNANI_TTS_MODEL,
-                "voice": GNANI_TTS_VOICE,
+                "voice": _tts_voice("gnani-vachana", GNANI_TTS_VOICE),
                 "audio_config": {
                     "sample_rate": TELEPHONY_RATE,
                     "num_channels": 1,
