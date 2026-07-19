@@ -92,6 +92,7 @@ class SettingsIn(BaseModel):
     stt_provider: str | None = None
     tts_provider: str | None = None
     tts_voice_gender: str | None = None
+    language: str | None = None
     prompt_template: str | None = None
     extra_instructions: str | None = None
 
@@ -129,6 +130,7 @@ def get_settings():
         "vetted_models": settings.VETTED_LLM_MODELS,
         "vetted_stt_providers": settings.provider_status(settings.VETTED_STT_PROVIDERS),
         "vetted_tts_providers": settings.provider_status(settings.VETTED_TTS_PROVIDERS),
+        "languages": settings.LANGUAGES,
         "locked_protocol": settings.PROMPT_PROTOCOL,
         "admin_required": settings.admin_required(),
     }

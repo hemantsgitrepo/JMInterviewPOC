@@ -24,17 +24,26 @@ SETTINGS_PATH = os.environ.get("SETTINGS_PATH", "settings.json")
 # Providers verified live against their APIs (Phase 2). "key_env" names the .env
 # credential each needs; selection is rejected while that key is absent so a missing
 # credential can never be discovered mid-call.
+# "languages" lists what each provider is wired up for in models.py (adapter param
+# maps + voice picks) — a language can only be selected while BOTH current providers
+# support it, and a provider can only be selected while it supports the current
+# language, so an unsupported combo can never be discovered mid-call.
 VETTED_STT_PROVIDERS = [
-    {"id": "openrouter-whisper", "label": "Whisper large-v3 via OpenRouter (default)", "key_env": "OPENROUTER_API_KEY"},
-    {"id": "deepgram-nova", "label": "Deepgram Nova 3 — telephony-tuned", "key_env": "DEEPGRAM_API_KEY"},
-    {"id": "sarvam-saaras", "label": "Sarvam Saaras v3 — Indian English/accents", "key_env": "SARVAM_API_KEY"},
-    {"id": "gnani-vachana", "label": "Gnani Vachana v3 — Indian English/accents", "key_env": "GNANI_API_KEY"},
+    {"id": "openrouter-whisper", "label": "Whisper large-v3 via OpenRouter (default)", "key_env": "OPENROUTER_API_KEY", "languages": {"en", "hi"}},
+    {"id": "deepgram-nova", "label": "Deepgram Nova 3 — telephony-tuned", "key_env": "DEEPGRAM_API_KEY", "languages": {"en", "hi"}},
+    {"id": "sarvam-saaras", "label": "Sarvam Saaras v3 — Indian English/accents", "key_env": "SARVAM_API_KEY", "languages": {"en", "hi"}},
+    {"id": "gnani-vachana", "label": "Gnani Vachana v3 — Indian English/accents", "key_env": "GNANI_API_KEY", "languages": {"en", "hi"}},
 ]
 VETTED_TTS_PROVIDERS = [
-    {"id": "cartesia-sonic", "label": "Cartesia Sonic 3.5 (default)", "key_env": "CARTESIA_API_KEY"},
-    {"id": "openai-tts", "label": "OpenAI gpt-4o-mini-tts", "key_env": "OPENAI_API_KEY"},
-    {"id": "sarvam-bulbul", "label": "Sarvam Bulbul v3 — Indian English voices", "key_env": "SARVAM_API_KEY"},
-    {"id": "gnani-vachana", "label": "Gnani Vachana Voice v3 — Indian English voices", "key_env": "GNANI_API_KEY"},
+    {"id": "cartesia-sonic", "label": "Cartesia Sonic 3.5 (default)", "key_env": "CARTESIA_API_KEY", "languages": {"en", "hi"}},
+    {"id": "openai-tts", "label": "OpenAI gpt-4o-mini-tts", "key_env": "OPENAI_API_KEY", "languages": {"en", "hi"}},
+    {"id": "sarvam-bulbul", "label": "Sarvam Bulbul v3 — Indian English voices", "key_env": "SARVAM_API_KEY", "languages": {"en", "hi"}},
+    {"id": "gnani-vachana", "label": "Gnani Vachana Voice v3 — Indian English voices", "key_env": "GNANI_API_KEY", "languages": {"en", "hi"}},
+]
+
+LANGUAGES = [
+    {"id": "en", "label": "English (default)"},
+    {"id": "hi", "label": "Hindi — Hinglish-tolerant"},
 ]
 
 # Each entry verified live on OpenRouter: model exists and supports response_format
@@ -130,6 +139,7 @@ DEFAULT_SETTINGS = {
     "stt_provider": "openrouter-whisper",
     "tts_provider": "cartesia-sonic",
     "tts_voice_gender": "default",
+    "language": "en",
     "prompt_template": DEFAULT_PROMPT_TEMPLATE,
     "extra_instructions": "",
 }
@@ -176,6 +186,10 @@ def tts_voice_gender() -> str:
     return get()["tts_voice_gender"]
 
 
+def language() -> str:
+    return get()["language"]
+
+
 def provider_status(vetted: list[dict]) -> list[dict]:
     """Vetted list annotated with whether each provider's .env key is present.
     Key *presence* only — the key material itself never leaves the server."""
@@ -192,6 +206,22 @@ def _validate_provider(kind: str, value: str, vetted: list[dict]) -> str:
     if not os.environ.get(match["key_env"], ""):
         raise ValueError(f"{match['label']} needs {match['key_env']} in .env before it can be selected.")
     return value
+
+
+def _check_language_combo(lang: str, stt_id: str, tts_id: str):
+    """Rejects a language the currently-effective provider pair can't serve (and,
+    symmetrically, a provider that can't serve the currently-effective language)."""
+    label = next((l["label"] for l in LANGUAGES if l["id"] == lang), lang)
+    for vetted, pid, kind in (
+        (VETTED_STT_PROVIDERS, stt_id, "STT"),
+        (VETTED_TTS_PROVIDERS, tts_id, "TTS"),
+    ):
+        p = next((x for x in vetted if x["id"] == pid), None)
+        if p and lang not in p["languages"]:
+            raise ValueError(
+                f"{p['label']} ({kind}) does not support {label} — "
+                f"switch the {kind} provider or the language, not this combination."
+            )
 
 
 def is_default() -> dict:
@@ -235,6 +265,12 @@ def update(partial: dict) -> dict:
         if gender not in VOICE_GENDERS:
             raise ValueError(f"Unknown voice gender {gender!r} — choose one of: {', '.join(VOICE_GENDERS)}.")
         clean["tts_voice_gender"] = gender
+    if "language" in partial:
+        lang = partial["language"]
+        if lang not in {l["id"] for l in LANGUAGES}:
+            raise ValueError(f"Unknown language {lang!r} — choose one of: "
+                             + ", ".join(l["id"] for l in LANGUAGES) + ".")
+        clean["language"] = lang
     if "prompt_template" in partial:
         err = validate_template(partial["prompt_template"])
         if err:
@@ -244,6 +280,9 @@ def update(partial: dict) -> dict:
         clean["extra_instructions"] = str(partial["extra_instructions"])
     with _lock:
         merged = (dict(_settings) if _settings is not None else _load()) | clean
+        # Combo check runs on the EFFECTIVE settings so provider+language can change in
+        # one request, and a lone provider switch is checked against the kept language.
+        _check_language_combo(merged["language"], merged["stt_provider"], merged["tts_provider"])
         tmp = SETTINGS_PATH + ".tmp"
         with open(tmp, "w") as f:
             json.dump(merged, f, indent=2)
@@ -262,6 +301,21 @@ def reset() -> dict:
             pass
         return dict(_settings)
 
+
+# Appended (before extra instructions, so admins keep override authority) when the
+# interview language is Hindi. Wording is deliberate: meaning-faithful question
+# translation relaxes the "EXACT configured wording" conduct rule, Hinglish is
+# embraced rather than fought, and the JSON protocol stays English so _plan_turn's
+# action contract is untouched.
+HINDI_DIRECTIVE = """LANGUAGE:
+Conduct this interview in Hindi. Speak natural, everyday Hindi written in Devanagari script,
+keeping technical terms, tool names, and company names in English the way an Indian speaker
+naturally would (Hinglish is fine). The candidate may answer in Hindi, English, or a mix —
+all are fine; never ask them to switch languages. Ask each configured question by faithfully
+conveying its meaning in natural Hindi (the exact-wording rule above applies to the meaning,
+not the English wording). If they ask you to repeat a question, restate it fully in Hindi
+yourself. The JSON protocol stays exactly as specified: all keys and action values remain in
+English; only the "reply" text is Hindi."""
 
 JD_CONTEXT_MAX_CHARS = 4000  # bound per-turn prompt tokens/latency; long JDs are truncated
 
@@ -297,6 +351,8 @@ def build_system_prompt(
             logger.info("JD context truncated from %d to %d chars", len(jd), JD_CONTEXT_MAX_CHARS)
             jd = jd[:JD_CONTEXT_MAX_CHARS]
         body += "\n\n" + JD_CONTEXT_HEADER + "\n---\n" + jd + "\n---"
+    if s["language"] == "hi":
+        body += "\n\n" + HINDI_DIRECTIVE
     extra = s["extra_instructions"].strip()
     if extra:
         # Overrides conflicting conduct rules by design: e.g. the default prompt deflects

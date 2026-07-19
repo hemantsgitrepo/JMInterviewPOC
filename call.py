@@ -31,6 +31,14 @@ CONTINUATION_WORDS = {
     "and", "or", "but", "so", "because", "cause", "that", "which", "with", "to", "for",
     "of", "the", "a", "an", "my", "our", "their", "um", "uh", "like", "if", "when", "then",
     "also", "plus", "i", "we", "it's", "its", "is",
+    # Hindi: postpositions and conjunctions can't end a complete clause (Hindi is
+    # verb-final — finished sentences end on है/हूँ/था/गा etc., never on these).
+    # One combined set is safe: English STT never emits Devanagari and vice versa.
+    "और", "या", "लेकिन", "पर", "तो", "कि", "क्योंकि", "जो", "अगर", "जब", "मतलब",
+    "जैसे", "का", "की", "के", "को", "से", "में", "भी", "एक", "मेरा", "मेरी", "मेरे",
+    "हमारा", "हमारी", "हमारे", "यानी", "फिर", "वो", "ये",
+    # ergative pronouns (-ने forms) grammatically require a following verb
+    "मैंने", "हमने", "उसने", "उन्होंने", "इसने", "जिसने",
 }
 MAX_FOLLOWUPS = 2
 NOISE_MULT = 3.0       # live speech threshold = noise_floor * this
@@ -48,6 +56,55 @@ CONFIRM_KEY_FACTS_RULE = """
   you got it wrong, apologize briefly and invite them to restate. Do this only for facts, never
   for ordinary descriptive answers."""
 
+# Aligns the agent's self-reference grammar with the gender of the voice the caller
+# actually hears (models.agent_voice_gender). Matters mostly in Hindi, where every
+# first-person verb is gendered and LLMs default to masculine — a female voice must
+# not say "मैं समझ गया". Applies to the agent only, never to the candidate.
+VOICE_GENDER_RULES = {
+    "female": """
+- Your voice is female. Wherever the language genders self-reference (Hindi first-person
+  forms like करती हूँ, समझ गई, बताऊँगी, चाहूँगी), always use FEMININE forms for yourself.
+  This applies only to how you refer to yourself, never to the candidate.""",
+    "male": """
+- Your voice is male. Wherever the language genders self-reference (Hindi first-person
+  forms like करता हूँ, समझ गया, बताऊँगा, चाहूँगा), always use MASCULINE forms for yourself.
+  This applies only to how you refer to yourself, never to the candidate.""",
+}
+# When the voice's gender is genuinely ambiguous (OpenAI alloy) a Hindi call still has
+# to conjugate first-person verbs somehow — steer toward neutral constructions.
+VOICE_NEUTRAL_RULE = """
+- Where Hindi allows it, prefer gender-neutral self-reference ("मुझे समझ आया", "ठीक है",
+  "मुझे बताना है") over strongly gendered first-person forms when a natural alternative exists."""
+
+
+# System-spoken lines (not LLM-generated) per interview language. Hindi phrasings are
+# deliberately gender-neutral (impersonal constructions, no first-person gendered verbs)
+# because the agent voice gender is selectable.
+LINES = {
+    "en": {
+        "reassure": "Take your time.",
+        "offer_repeat": "Would you like me to repeat the question? || Or we can move on to the next one.",
+        "disconnected": "It seems we got disconnected. ",
+        "reprompt": "Sorry, I didn't quite catch that. || Could you say that again, a little louder?",
+        "tech_issue": "I'm sorry, we're having a technical issue. || ",
+        "closing_qa": "Before we wrap up, do you have any questions for me about the role or the company?",
+        "wrap_or_go": "Would you like to wrap up here, or keep going?",
+    },
+    "hi": {
+        "reassure": "कोई जल्दी नहीं, आराम से सोचिए।",
+        "offer_repeat": "क्या मैं सवाल दोहरा दूँ? || या हम अगले सवाल पर चलें?",
+        "disconnected": "लगता है हमारा संपर्क टूट गया। ",
+        "reprompt": "माफ़ कीजिए, आपकी बात ठीक से सुनाई नहीं दी। || क्या आप थोड़ा ज़ोर से दोबारा कह सकते हैं?",
+        "tech_issue": "माफ़ कीजिए, कुछ तकनीकी दिक्कत आ रही है। || ",
+        "closing_qa": "ख़त्म करने से पहले, क्या आप रोल या कंपनी के बारे में मुझसे कुछ पूछना चाहेंगे?",
+        "wrap_or_go": "क्या आप यहीं समाप्त करना चाहेंगे, या आगे बढ़ें?",
+    },
+}
+
+
+def line(key: str) -> str:
+    return LINES.get(settings.language(), LINES["en"])[key]
+
 
 def classify_utterance(text: str, utt_rms: int, behavior: dict) -> str:
     """Cheap pre-LLM triage of a transcribed utterance. Returns:
@@ -56,7 +113,9 @@ def classify_utterance(text: str, utt_rms: int, behavior: dict) -> str:
     - "wait":     filler-only ("um...") — they're thinking; say nothing, listen longer
     - "reprompt": they audibly spoke but nothing transcribed — ask them to say it again
     """
-    norm = re.sub(r"[^a-z' ]", " ", (text or "").lower()).strip()
+    # ऀ-ॿ keeps Devanagari: without it a pure-Hindi transcript normalizes to
+    # empty and every real answer would classify as "reprompt" — an infinite loop.
+    norm = re.sub(r"[^a-z' ऀ-ॿ]", " ", (text or "").lower()).strip()
     norm = " ".join(norm.split())
     if not norm:
         return "reprompt" if utt_rms >= behavior["low_volume_rms"] else "ignore"
@@ -72,7 +131,7 @@ def ends_midthought(text: str) -> bool:
     """True if the transcription trails off on a connective/article — a paused, unfinished
     sentence rather than a complete answer. Used to keep listening (and stitch) instead of
     cutting in with an acknowledgment or reply."""
-    words = re.sub(r"[^a-z' ]", " ", (text or "").lower()).split()
+    words = re.sub(r"[^a-z' ऀ-ॿ]", " ", (text or "").lower()).split()
     return bool(words) and words[-1] in CONTINUATION_WORDS
 
 
@@ -235,14 +294,11 @@ class CallSession:
                 if self.silent_frames >= wait_ms // 20:
                     self.silent_frames = 0
                     if self.silence_tier == 0:
-                        self.start_line("Take your time.", "turn_done")
+                        self.start_line(line("reassure"), "turn_done")
                     elif self.silence_tier == 1:
-                        self.start_line(
-                            "Would you like me to repeat the question? || Or we can move on to the next one.",
-                            "turn_done",
-                        )
+                        self.start_line(line("offer_repeat"), "turn_done")
                     else:
-                        self.start_line("It seems we got disconnected. " + self.config["end_call_line"], "end")
+                        self.start_line(line("disconnected") + self.config["end_call_line"], "end")
                     self.silence_tier += 1
         # PROCESSING: ignore inbound (brief window between utterance end and first audio)
 
@@ -348,10 +404,7 @@ class CallSession:
                 self._resume_listening(self.behavior["filler_extra_wait_ms"])
                 return
             if verdict == "reprompt":  # they spoke, nothing transcribed
-                await self.deliver(
-                    split_clauses("Sorry, I didn't quite catch that. || Could you say that again, a little louder?"),
-                    "turn_done",
-                )
+                await self.deliver(split_clauses(line("reprompt")), "turn_done")
                 return
             if ends_midthought(text) and len(utt) < STITCH_MAX_BYTES:
                 # they paused mid-sentence — hold their audio and keep listening rather than
@@ -389,10 +442,7 @@ class CallSession:
             self.ending = True  # protect the closing line from barge-in like any other end-of-call
             try:
                 await self.deliver(
-                    split_clauses(
-                        "I'm sorry, we're having a technical issue. || "
-                        + self.config["end_call_line"]
-                    ),
+                    split_clauses(line("tech_issue") + self.config["end_call_line"]),
                     "end",
                 )
             except Exception:
@@ -402,6 +452,11 @@ class CallSession:
         """Decide clauses + closing mark, and stash the index change to commit on clean end."""
         action, reply = turn["action"], turn.get("reply", "")
         qs = self.config["questions"]
+        if action == "repeat" and settings.language() != "en":
+            # Non-English interview: the configured question text is (usually) English, so
+            # a verbatim replay would switch languages mid-call. The language directive
+            # tells the LLM to restate the question itself — treat repeat as a stay.
+            action = "stay"
         if action == "repeat" and 0 <= self.question_index < len(qs):
             # replay the configured question verbatim — the LLM only supplies a short lead-in
             self.pending = None
@@ -425,7 +480,7 @@ class CallSession:
                     self.history[self._last_hist_idx]["content"] = json.dumps({"reply": reply, "action": "stay"})
                 clauses = split_clauses(reply)
                 if "?" not in reply:  # it announced an ending without asking — make it a real question
-                    clauses.append("Would you like to wrap up here, or keep going?")
+                    clauses.append(line("wrap_or_go"))
                 return clauses, "turn_done"
         else:
             self.awaiting_end_confirm = False  # any other action clears a pending offer
@@ -464,7 +519,7 @@ class CallSession:
             self.offered_closing_questions = True
             self.pending = (len(qs), 0)
             clauses = split_clauses(reply)
-            clauses.append("Before we wrap up, do you have any questions for me about the role or the company?")
+            clauses.append(line("closing_qa"))
             return clauses, "turn_done"
         if effective == "end_call":
             self.ending = True
@@ -495,6 +550,11 @@ class CallSession:
         )
         if self.behavior["confirm_key_facts"]:
             prompt += CONFIRM_KEY_FACTS_RULE
+        gender = models.agent_voice_gender()
+        if gender:
+            prompt += VOICE_GENDER_RULES[gender]
+        elif settings.language() == "hi":
+            prompt += VOICE_NEUTRAL_RULE
         return prompt
 
     def status_line(self) -> str:
