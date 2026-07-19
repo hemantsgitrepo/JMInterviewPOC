@@ -266,6 +266,14 @@
       <span id="tts-provider-tag" class="tag default">DEFAULT</span></label>
     <select id="set-tts-provider"></select>
 
+    <label for="set-voice-gender">Agent voice
+      <span id="voice-gender-tag" class="tag default">DEFAULT</span></label>
+    <select id="set-voice-gender">
+      <option value="default">Provider default (varies by provider)</option>
+      <option value="female">Female</option>
+      <option value="male">Male</option>
+    </select>
+
     <label for="set-prompt-template">Persona &amp; conduct prompt
       <span id="prompt-template-tag" class="tag default">DEFAULT</span></label>
     <textarea id="set-prompt-template" class="mono" rows="14" spellcheck="false"></textarea>
@@ -685,12 +693,14 @@ async function loadSettings() {
   ).join("");
   fillProviderSelect("set-stt-provider", s.vetted_stt_providers, s.settings.stt_provider);
   fillProviderSelect("set-tts-provider", s.vetted_tts_providers, s.settings.tts_provider);
+  $("set-voice-gender").value = s.settings.tts_voice_gender;
   $("set-prompt-template").value = s.settings.prompt_template;
   $("set-extra-instructions").value = s.settings.extra_instructions;
   $("locked-protocol").textContent = s.locked_protocol;
   settingsTag("llm-model", s.is_default.llm_model);
   settingsTag("stt-provider", s.is_default.stt_provider);
   settingsTag("tts-provider", s.is_default.tts_provider);
+  settingsTag("voice-gender", s.is_default.tts_voice_gender);
   settingsTag("prompt-template", s.is_default.prompt_template);
   settingsTag("extra-instructions", s.is_default.extra_instructions);
 }
@@ -741,6 +751,7 @@ $("save-settings").onclick = async () => {
       llm_model: $("set-llm-model").value,
       stt_provider: $("set-stt-provider").value,
       tts_provider: $("set-tts-provider").value,
+      tts_voice_gender: $("set-voice-gender").value,
       prompt_template: $("set-prompt-template").value,
       extra_instructions: $("set-extra-instructions").value,
     });

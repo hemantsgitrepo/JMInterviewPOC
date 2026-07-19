@@ -121,10 +121,15 @@ CRITICAL: if your reply asks the candidate ANYTHING — including "would you lik
 the action MUST be "stay". Never pair a question with "end_call": that hangs up before they can
 answer you. Only use "end_call" once they have already answered such a question."""
 
+# "default" keeps each provider's original voice (which differ in gender across
+# providers); "female"/"male" map through models.TTS_VOICES to an explicit voice.
+VOICE_GENDERS = ["default", "female", "male"]
+
 DEFAULT_SETTINGS = {
     "llm_model": "google/gemini-2.5-flash",
     "stt_provider": "openrouter-whisper",
     "tts_provider": "cartesia-sonic",
+    "tts_voice_gender": "default",
     "prompt_template": DEFAULT_PROMPT_TEMPLATE,
     "extra_instructions": "",
 }
@@ -165,6 +170,10 @@ def stt_provider() -> str:
 
 def tts_provider() -> str:
     return get()["tts_provider"]
+
+
+def tts_voice_gender() -> str:
+    return get()["tts_voice_gender"]
 
 
 def provider_status(vetted: list[dict]) -> list[dict]:
@@ -221,6 +230,11 @@ def update(partial: dict) -> dict:
         clean["stt_provider"] = _validate_provider("STT", partial["stt_provider"], VETTED_STT_PROVIDERS)
     if "tts_provider" in partial:
         clean["tts_provider"] = _validate_provider("TTS", partial["tts_provider"], VETTED_TTS_PROVIDERS)
+    if "tts_voice_gender" in partial:
+        gender = partial["tts_voice_gender"]
+        if gender not in VOICE_GENDERS:
+            raise ValueError(f"Unknown voice gender {gender!r} — choose one of: {', '.join(VOICE_GENDERS)}.")
+        clean["tts_voice_gender"] = gender
     if "prompt_template" in partial:
         err = validate_template(partial["prompt_template"])
         if err:

@@ -73,19 +73,20 @@ def _create_call(cand: dict):
 
 
 async def warm_fillers():
-    """Pre-warm latency-masking clips, re-synthesizing whenever the TTS provider has
-    changed since they were cached — otherwise acks ("Okay.", "Mhm.") keep playing in
-    the previous provider's voice while the main replies use the new one."""
-    provider = settings.tts_provider()
-    if store.FILLER_ULAW and store.FILLER_TTS_PROVIDER == provider:
+    """Pre-warm latency-masking clips, re-synthesizing whenever the TTS voice has
+    changed since they were cached (provider or voice-gender switch) — otherwise acks
+    ("Okay.", "Mhm.") keep playing in the previous voice while the main replies use
+    the new one."""
+    sig = models.tts_voice_signature()
+    if store.FILLER_ULAW and store.FILLER_TTS_SIG == sig:
         return
     try:
         # the None entries mean an occasional silent beat instead of a spoken ack
         store.FILLER_ULAW = [await models.speak(p) for p in store.FILLER_PHRASES] + [None, None]
-        store.FILLER_TTS_PROVIDER = provider
+        store.FILLER_TTS_SIG = sig
     except Exception:
         store.FILLER_ULAW = []
-        store.FILLER_TTS_PROVIDER = None
+        store.FILLER_TTS_SIG = None
 
 
 async def run_session():
