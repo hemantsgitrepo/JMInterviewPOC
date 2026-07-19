@@ -274,6 +274,14 @@
       <option value="male">Male</option>
     </select>
 
+    <label for="set-language">Interview language
+      <span id="language-tag" class="tag default">DEFAULT</span></label>
+    <select id="set-language"></select>
+    <div class="hint">Hindi mode is Hinglish-tolerant: candidates can answer in Hindi, English, or a mix.
+      The opening line, questions, and closing line are spoken as configured — write them in Hindi
+      for a fully Hindi call, or leave them in English and the agent asks the questions in Hindi itself.
+      For Hindi STT, Deepgram or Sarvam handle mixed speech best.</div>
+
     <label for="set-prompt-template">Persona &amp; conduct prompt
       <span id="prompt-template-tag" class="tag default">DEFAULT</span></label>
     <textarea id="set-prompt-template" class="mono" rows="14" spellcheck="false"></textarea>
@@ -694,6 +702,9 @@ async function loadSettings() {
   fillProviderSelect("set-stt-provider", s.vetted_stt_providers, s.settings.stt_provider);
   fillProviderSelect("set-tts-provider", s.vetted_tts_providers, s.settings.tts_provider);
   $("set-voice-gender").value = s.settings.tts_voice_gender;
+  $("set-language").innerHTML = s.languages.map(l =>
+    `<option value="${esc(l.id)}"${l.id === s.settings.language ? " selected" : ""}>${esc(l.label)}</option>`
+  ).join("");
   $("set-prompt-template").value = s.settings.prompt_template;
   $("set-extra-instructions").value = s.settings.extra_instructions;
   $("locked-protocol").textContent = s.locked_protocol;
@@ -701,6 +712,7 @@ async function loadSettings() {
   settingsTag("stt-provider", s.is_default.stt_provider);
   settingsTag("tts-provider", s.is_default.tts_provider);
   settingsTag("voice-gender", s.is_default.tts_voice_gender);
+  settingsTag("language", s.is_default.language);
   settingsTag("prompt-template", s.is_default.prompt_template);
   settingsTag("extra-instructions", s.is_default.extra_instructions);
 }
@@ -752,6 +764,7 @@ $("save-settings").onclick = async () => {
       stt_provider: $("set-stt-provider").value,
       tts_provider: $("set-tts-provider").value,
       tts_voice_gender: $("set-voice-gender").value,
+      language: $("set-language").value,
       prompt_template: $("set-prompt-template").value,
       extra_instructions: $("set-extra-instructions").value,
     });

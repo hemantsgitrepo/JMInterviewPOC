@@ -67,6 +67,15 @@ TTS_VOICES = {
     "gnani-vachana": {"female": "Kaveri", "male": GNANI_TTS_VOICE},
 }
 
+# Cartesia voices are language-bound (the English default can't speak Hindi), so Hindi
+# gets its own pair; gender "default" resolves female, matching the English default's
+# gender. Female is "Arushi - Hinglish Speaker" (built for code-mixed content — exactly
+# what LLM-generated Hindi with English tech terms is); male is "Rohan - Steady
+# Communicator" (corporate-tuned). The other three TTS providers keep their voices
+# across languages: Sarvam switches via target_language_code, OpenAI and Gnani follow
+# the script of the input text.
+CARTESIA_VOICES_HI = {"female": "95d51f79-c397-46f9-b49a-23763d3eaa2d", "male": "4877b818-c7fe-4c89-b1cf-eadf8e23da72"}
+
 
 def _tts_voice(provider: str, default: str) -> str:
     """Resolve the voice for a provider: the provider's original voice on "default",
@@ -79,15 +88,22 @@ def _tts_voice(provider: str, default: str) -> str:
 
 def tts_voice_signature() -> str:
     """Identity of the audio the current TTS settings produce, for caches of
-    pre-synthesized clips (filler acks): same signature -> same voice."""
+    pre-synthesized clips (filler acks): same signature -> same voice. Includes the
+    language because it changes the voice (Cartesia), the pronunciation target
+    (Sarvam), and the filler phrases themselves."""
     provider = settings.tts_provider()
-    defaults = {
-        "cartesia-sonic": CARTESIA_VOICE_ID,
-        "openai-tts": OPENAI_TTS_VOICE,
-        "sarvam-bulbul": SARVAM_TTS_SPEAKER,
-        "gnani-vachana": GNANI_TTS_VOICE,
-    }
-    return f"{provider}|{_tts_voice(provider, defaults.get(provider, ''))}"
+    lang = settings.language()
+    if provider == "cartesia-sonic" and lang == "hi":
+        voice = CARTESIA_VOICES_HI["male" if settings.tts_voice_gender() == "male" else "female"]
+    else:
+        defaults = {
+            "cartesia-sonic": CARTESIA_VOICE_ID,
+            "openai-tts": OPENAI_TTS_VOICE,
+            "sarvam-bulbul": SARVAM_TTS_SPEAKER,
+            "gnani-vachana": GNANI_TTS_VOICE,
+        }
+        voice = _tts_voice(provider, defaults.get(provider, ""))
+    return f"{provider}|{voice}|{lang}"
 
 _client = httpx.AsyncClient(
     base_url="https://openrouter.ai/api/v1",
@@ -181,10 +197,13 @@ async def _transcribe_openrouter(wav: bytes) -> dict:
     async def go():
         r = await _client.post(
             "/audio/transcriptions",
-            # language is pinned: auto-detect on 8kHz telephony audio occasionally lands on
-            # the wrong language and returns a fluent-but-wrong transcript (seen once as Welsh),
-            # which reaches the LLM as a garbled answer.
-            data={"model": STT_MODEL, "language": "en"},
+            # language is pinned, never auto-detected: auto-detect on 8kHz telephony audio
+            # occasionally lands on the wrong language and returns a fluent-but-wrong
+            # transcript (seen once as Welsh), which reaches the LLM as a garbled answer.
+            # Whisper has no code-switching mode, so Hindi mode hard-pins "hi" — the
+            # weakest Hinglish option here; Deepgram (multi) or Sarvam (codemix) handle
+            # mixed speech better.
+            data={"model": STT_MODEL, "language": "hi" if settings.language() == "hi" else "en"},
             files={"file": ("utterance.wav", wav, "audio/wav")},
         )
         r.raise_for_status()
@@ -205,8 +224,12 @@ async def _transcribe_deepgram(wav: bytes) -> dict:
     so the UI shows n/a rather than a made-up number."""
 
     async def go():
+        # Hindi mode uses language=multi (nova-3 code-switching, Hindi included) rather
+        # than a hard hi pin: interview answers are Hinglish in practice, and multi keeps
+        # the English technical vocabulary intact instead of forcing it into Hindi.
+        lang = "multi" if settings.language() == "hi" else "en"
         r = await _deepgram.post(
-            f"/v1/listen?model={DEEPGRAM_STT_MODEL}&language=en",
+            f"/v1/listen?model={DEEPGRAM_STT_MODEL}&language={lang}",
             content=wav,
             headers={"Content-Type": "audio/wav"},
         )
@@ -227,9 +250,14 @@ async def _transcribe_sarvam(wav: bytes) -> dict:
     answer. cost=None: Sarvam bills per-minute off-request (see docs/backlog.md)."""
 
     async def go():
+        # Hindi mode uses Sarvam's codemix mode — their recommended setting for Hinglish:
+        # English words stay in Latin script, Hindi in Devanagari, numbers normalized.
+        lang, mode = (
+            ("hi-IN", "codemix") if settings.language() == "hi" else (INDIAN_ENGLISH, "transcribe")
+        )
         r = await _sarvam.post(
             "/speech-to-text",
-            data={"model": SARVAM_STT_MODEL, "language_code": INDIAN_ENGLISH, "mode": "transcribe"},
+            data={"model": SARVAM_STT_MODEL, "language_code": lang, "mode": mode},
             files={"file": ("utterance.wav", wav, "audio/wav")},
         )
         r.raise_for_status()
@@ -248,9 +276,11 @@ async def _transcribe_gnani(wav: bytes) -> dict:
     ends_midthought both case-fold and strip punctuation before matching."""
 
     async def go():
+        # Gnani has no code-switching mode; Hindi mode pins hi-IN.
+        lang = "hi-IN" if settings.language() == "hi" else INDIAN_ENGLISH
         r = await _gnani.post(
             "/stt/v3",
-            data={"language_code": INDIAN_ENGLISH, "format": "transcribe"},
+            data={"language_code": lang, "format": "transcribe"},
             files={"audio_file": ("utterance.wav", wav, "audio/wav")},
         )
         r.raise_for_status()
@@ -299,6 +329,10 @@ async def next_turn(system: str, messages: list[dict]) -> tuple[dict, dict]:
 HALLUCINATIONS = {
     "thank you", "thanks", "thank you very much", "thank you so much",
     "thank you for watching", "thanks for watching", "bye", "you", "the end",
+    # Hindi Whisper artifacts on silence/noise. The subscribe lines are the classic
+    # YouTube-training-data tell; नमस्ते is deliberately NOT here — it's a real greeting.
+    "धन्यवाद", "शुक्रिया", "देखने के लिए धन्यवाद",
+    "सब्सक्राइब करें", "कृपया सब्सक्राइब करें", "चैनल को सब्सक्राइब करें",
 }
 
 
@@ -339,19 +373,23 @@ def _wav_to_ulaw(wav: bytes) -> bytes:
 
 async def _speak_cartesia(text: str) -> bytes:
     async def go():
-        r = await _cartesia.post(
-            "/tts/bytes",
-            json={
-                "transcript": text,
-                "model_id": CARTESIA_MODEL,
-                "voice": {"mode": "id", "id": _tts_voice("cartesia-sonic", CARTESIA_VOICE_ID)},
-                "output_format": {
-                    "container": "raw",
-                    "encoding": "pcm_s16le",
-                    "sample_rate": CARTESIA_PCM_RATE,
-                },
+        if settings.language() == "hi":
+            voice = CARTESIA_VOICES_HI["male" if settings.tts_voice_gender() == "male" else "female"]
+        else:
+            voice = _tts_voice("cartesia-sonic", CARTESIA_VOICE_ID)
+        body = {
+            "transcript": text,
+            "model_id": CARTESIA_MODEL,
+            "voice": {"mode": "id", "id": voice},
+            "output_format": {
+                "container": "raw",
+                "encoding": "pcm_s16le",
+                "sample_rate": CARTESIA_PCM_RATE,
             },
-        )
+        }
+        if settings.language() == "hi":
+            body["language"] = "hi"
+        r = await _cartesia.post("/tts/bytes", json=body)
         r.raise_for_status()
         return r.content
 
@@ -389,7 +427,7 @@ async def _speak_sarvam(text: str) -> bytes:
                 "text": text,
                 "model": SARVAM_TTS_MODEL,
                 "speaker": _tts_voice("sarvam-bulbul", SARVAM_TTS_SPEAKER),
-                "target_language_code": INDIAN_ENGLISH,
+                "target_language_code": "hi-IN" if settings.language() == "hi" else INDIAN_ENGLISH,
                 "speech_sample_rate": TELEPHONY_RATE,
                 "output_audio_codec": "wav",
             },

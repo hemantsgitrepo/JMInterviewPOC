@@ -58,7 +58,8 @@ settings._settings = None  # force reload from disk
 assert settings.get()["llm_model"] == "anthropic/claude-haiku-4.5", "reload lost the update"
 assert settings.is_default() == {
     "llm_model": False, "stt_provider": True, "tts_provider": True,
-    "tts_voice_gender": True, "prompt_template": True, "extra_instructions": True,
+    "tts_voice_gender": True, "language": True, "prompt_template": True,
+    "extra_instructions": True,
 }
 settings.reset()
 assert not os.path.exists("settings_test.json")
@@ -108,6 +109,51 @@ for bad_gender in ("neutral", "", "MALE"):
         raise AssertionError(f"accepted invalid voice gender {bad_gender!r}")
     except ValueError:
         pass
+cleanup()
+
+# language: default en; hi injects the directive before the locked protocol; en stays
+# byte-identical (guaranteed by section 1); invalid and unsupported-combo rejected
+assert settings.language() == "en"
+out_en = settings.build_system_prompt("Acme", "Jane", QS)
+assert settings.HINDI_DIRECTIVE not in out_en, "en prompt must not carry the Hindi directive"
+settings.update({"language": "hi"})
+out_hi = settings.build_system_prompt("Acme", "Jane", QS)
+assert settings.HINDI_DIRECTIVE in out_hi
+assert out_hi.index(settings.HINDI_DIRECTIVE) < out_hi.index(settings.PROMPT_PROTOCOL)
+assert out_hi.endswith(settings.PROMPT_PROTOCOL), "locked protocol must stay last"
+# directive sits BEFORE extra instructions so admin extras keep override authority
+settings.update({"extra_instructions": "Salary band is 5-8 LPA."})
+out_hi = settings.build_system_prompt("Acme", "Jane", QS)
+assert out_hi.index(settings.HINDI_DIRECTIVE) < out_hi.index("Salary band is 5-8 LPA.")
+for bad_lang in ("fr", "", "HI"):
+    try:
+        settings.update({"language": bad_lang})
+        raise AssertionError(f"accepted invalid language {bad_lang!r}")
+    except ValueError:
+        pass
+# combo validation: a provider that lacks hi rejects language=hi, and rejects being
+# selected while hi is active — both directions, like the missing-key gate
+settings.reset()
+os.environ["FAKE_KEY"] = "x"
+settings.VETTED_STT_PROVIDERS.append({"id": "tmp-en-only", "label": "Tmp EN", "key_env": "FAKE_KEY", "languages": {"en"}})
+try:
+    settings.update({"stt_provider": "tmp-en-only"})
+    try:
+        settings.update({"language": "hi"})
+        raise AssertionError("accepted hi with an en-only STT provider")
+    except ValueError as e:
+        assert "Tmp EN" in str(e)
+    settings.update({"stt_provider": "openrouter-whisper", "language": "hi"})
+    try:
+        settings.update({"stt_provider": "tmp-en-only"})
+        raise AssertionError("accepted an en-only provider while language=hi")
+    except ValueError:
+        pass
+    # provider+language changed together validate as a pair
+    settings.update({"stt_provider": "tmp-en-only", "language": "en"})
+finally:
+    settings.VETTED_STT_PROVIDERS.pop()
+    os.environ.pop("FAKE_KEY", None)
 cleanup()
 
 for bad_template, why in [

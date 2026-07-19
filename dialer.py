@@ -82,7 +82,8 @@ async def warm_fillers():
         return
     try:
         # the None entries mean an occasional silent beat instead of a spoken ack
-        store.FILLER_ULAW = [await models.speak(p) for p in store.FILLER_PHRASES] + [None, None]
+        phrases = store.FILLER_PHRASES.get(settings.language(), store.FILLER_PHRASES["en"])
+        store.FILLER_ULAW = [await models.speak(p) for p in phrases] + [None, None]
         store.FILLER_TTS_SIG = sig
     except Exception:
         store.FILLER_ULAW = []

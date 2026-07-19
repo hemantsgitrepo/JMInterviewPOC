@@ -26,7 +26,10 @@ config = {
         "silence_tier1_ms": 4000,     # pure reassurance ("Take your time.") — no question
         "silence_tier2_ms": 9000,     # offer to repeat or move on
         # True hesitation noises only — "like/so/actually" are content words, keep them out.
-        "filler_words": ["um", "uh", "erm", "hmm", "uhh", "umm", "huh", "mmm", "mm", "hm", "er", "ah"],
+        # Devanagari entries are the Hindi equivalents (plus "मतलब", the spoken-Hindi
+        # "I mean..."); harmless in English mode since English STT never emits them.
+        "filler_words": ["um", "uh", "erm", "hmm", "uhh", "umm", "huh", "mmm", "mm", "hm", "er", "ah",
+                         "उम्म", "उम", "हम्म", "अं", "मतलब"],
         "filler_ratio": 0.8,          # >= this fraction filler tokens -> silent wait
         "filler_extra_wait_ms": 6000, # extra listening window after a filler-only utterance
         "low_volume_rms": 150,        # spoke but transcription empty + at least this loud -> reprompt
@@ -44,10 +47,14 @@ session = {"running": False, "current": None, "call_done": None}
 # STT+LLM+TTS latency. Pre-synthesized by the dialer; empty in loopback (skipped).
 # The dialer appends None entries so sometimes no acknowledgment plays — a beat of
 # silence before answering is the most human backchannel of all.
-# FILLER_TTS_SIG records which TTS voice (provider + selected voice, see
-# models.tts_voice_signature) the cached clips were synthesized with, so a provider
-# OR voice-gender switch re-synthesizes them instead of mixing two voices.
-FILLER_PHRASES = ["Right.", "Okay.", "Sure.", "Alright.", "I see.", "Got it.", "Mm, okay.", "Mhm."]
+# FILLER_TTS_SIG records which TTS voice (provider + selected voice + language, see
+# models.tts_voice_signature) the cached clips were synthesized with, so a provider,
+# voice-gender, or language switch re-synthesizes them instead of mixing two voices.
+# Hindi acks are deliberately gender-neutral phrasings — the agent voice may be either.
+FILLER_PHRASES = {
+    "en": ["Right.", "Okay.", "Sure.", "Alright.", "I see.", "Got it.", "Mm, okay.", "Mhm."],
+    "hi": ["अच्छा।", "ठीक है।", "जी।", "हम्म।", "बिल्कुल।"],
+}
 FILLER_ULAW: list[bytes | None] = []
 FILLER_TTS_SIG: str | None = None
 
