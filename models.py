@@ -86,6 +86,28 @@ def _tts_voice(provider: str, default: str) -> str:
     return default
 
 
+# Perceived gender of each provider's DEFAULT voice (gender setting "default"), so the
+# prompt can align the agent's self-reference grammar with what the caller hears.
+# OpenAI alloy is None on purpose: officially unlabeled and genuinely androgynous.
+DEFAULT_VOICE_GENDER = {
+    "cartesia-sonic": "female",  # British Lady (en) / Arushi (hi)
+    "openai-tts": None,          # alloy
+    "sarvam-bulbul": "male",     # shubh
+    "gnani-vachana": "male",     # Pranav
+}
+
+
+def agent_voice_gender() -> str | None:
+    """The gender the current TTS voice is heard as ("female"/"male"), or None when
+    genuinely ambiguous. Feeds the self-reference grammar rule in the system prompt so
+    a female-sounding agent never speaks about itself in masculine forms (pervasive in
+    Hindi, where first-person verbs are gendered; rare but possible in English)."""
+    g = settings.tts_voice_gender()
+    if g in ("female", "male"):
+        return g
+    return DEFAULT_VOICE_GENDER.get(settings.tts_provider())
+
+
 def tts_voice_signature() -> str:
     """Identity of the audio the current TTS settings produce, for caches of
     pre-synthesized clips (filler acks): same signature -> same voice. Includes the

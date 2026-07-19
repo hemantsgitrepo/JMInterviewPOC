@@ -56,6 +56,26 @@ CONFIRM_KEY_FACTS_RULE = """
   you got it wrong, apologize briefly and invite them to restate. Do this only for facts, never
   for ordinary descriptive answers."""
 
+# Aligns the agent's self-reference grammar with the gender of the voice the caller
+# actually hears (models.agent_voice_gender). Matters mostly in Hindi, where every
+# first-person verb is gendered and LLMs default to masculine — a female voice must
+# not say "मैं समझ गया". Applies to the agent only, never to the candidate.
+VOICE_GENDER_RULES = {
+    "female": """
+- Your voice is female. Wherever the language genders self-reference (Hindi first-person
+  forms like करती हूँ, समझ गई, बताऊँगी, चाहूँगी), always use FEMININE forms for yourself.
+  This applies only to how you refer to yourself, never to the candidate.""",
+    "male": """
+- Your voice is male. Wherever the language genders self-reference (Hindi first-person
+  forms like करता हूँ, समझ गया, बताऊँगा, चाहूँगा), always use MASCULINE forms for yourself.
+  This applies only to how you refer to yourself, never to the candidate.""",
+}
+# When the voice's gender is genuinely ambiguous (OpenAI alloy) a Hindi call still has
+# to conjugate first-person verbs somehow — steer toward neutral constructions.
+VOICE_NEUTRAL_RULE = """
+- Where Hindi allows it, prefer gender-neutral self-reference ("मुझे समझ आया", "ठीक है",
+  "मुझे बताना है") over strongly gendered first-person forms when a natural alternative exists."""
+
 
 # System-spoken lines (not LLM-generated) per interview language. Hindi phrasings are
 # deliberately gender-neutral (impersonal constructions, no first-person gendered verbs)
@@ -530,6 +550,11 @@ class CallSession:
         )
         if self.behavior["confirm_key_facts"]:
             prompt += CONFIRM_KEY_FACTS_RULE
+        gender = models.agent_voice_gender()
+        if gender:
+            prompt += VOICE_GENDER_RULES[gender]
+        elif settings.language() == "hi":
+            prompt += VOICE_NEUTRAL_RULE
         return prompt
 
     def status_line(self) -> str:

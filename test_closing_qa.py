@@ -9,6 +9,10 @@ Usage: python test_closing_qa.py
 """
 
 import json
+import os
+
+os.environ["SETTINGS_PATH"] = "settings_test_closing_qa.json"  # hermetic: system lines
+# and _plan_turn are language-sensitive, so never read the operator's live settings.json
 
 from call import CallSession
 

@@ -81,6 +81,39 @@ assert QS[0] in clauses, "en mode must keep the verbatim question replay"
 # --- filler phrases exist per language, gender-neutral hi set -----------------
 assert set(store.FILLER_PHRASES) >= {"en", "hi"} and store.FILLER_PHRASES["hi"]
 
+# --- voice-gender rule in the system prompt -----------------------------------
+# the LLM must know what gender the caller HEARS so self-reference grammar matches
+# (a female voice must never say "मैं समझ गया")
+from call import VOICE_GENDER_RULES, VOICE_NEUTRAL_RULE
+import models
+
+
+def prompt_for(**kv):
+    settings.update(kv)
+    s2 = CallSession(ws=None)
+    s2.cand = {"name": "Jane"}
+    s2.config = {"company_name": "Acme", "questions": QS, "jd_text": ""}
+    return s2.system_prompt()
+
+
+# explicit setting wins regardless of provider
+p = prompt_for(tts_provider="cartesia-sonic", tts_voice_gender="male", language="hi")
+assert VOICE_GENDER_RULES["male"] in p and VOICE_GENDER_RULES["female"] not in p
+p = prompt_for(tts_voice_gender="female")
+assert VOICE_GENDER_RULES["female"] in p
+# gender "default" resolves the provider's actual default voice: sarvam=male, cartesia=female
+p = prompt_for(tts_provider="sarvam-bulbul", tts_voice_gender="default")
+assert VOICE_GENDER_RULES["male"] in p
+p = prompt_for(tts_provider="cartesia-sonic", tts_voice_gender="default")
+assert VOICE_GENDER_RULES["female"] in p
+# openai alloy is genuinely ambiguous: no gender rule; in hi, neutral guidance instead
+p = prompt_for(tts_provider="openai-tts", tts_voice_gender="default", language="hi")
+assert VOICE_GENDER_RULES["female"] not in p and VOICE_GENDER_RULES["male"] not in p
+assert VOICE_NEUTRAL_RULE in p
+p = prompt_for(language="en")
+assert VOICE_NEUTRAL_RULE not in p, "neutral guidance is Hindi-only"
+assert models.agent_voice_gender() is None
+
 cleanup()
 print("OK: Devanagari classification, Hindi mid-thought detection, line table, "
       "hi repeat-as-stay, and per-language fillers all correct.")
