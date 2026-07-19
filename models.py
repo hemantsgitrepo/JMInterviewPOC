@@ -3,10 +3,13 @@ Retries with backoff, longer on 429 (rate limit) since an instant retry almost a
 hits the same limit window."""
 
 import asyncio
+import base64
+import io
 import json
 import logging
 import os
 import re
+import wave
 
 import httpx
 from dotenv import load_dotenv
@@ -38,6 +41,18 @@ DEEPGRAM_STT_MODEL = "nova-3"
 OPENAI_TTS_MODEL = "gpt-4o-mini-tts"
 OPENAI_TTS_VOICE = "alloy"
 OPENAI_PCM_RATE = 24_000
+# Sarvam and Gnani are India-focused: both require a BCP-47 language code and neither
+# offers a bare "en", so English is pinned as en-IN (same reasoning as STT_MODEL's
+# language pin — auto-detect on 8kHz telephony audio can land on the wrong language).
+INDIAN_ENGLISH = "en-IN"
+SARVAM_STT_MODEL = "saaras:v3"
+SARVAM_TTS_MODEL = "bulbul:v3"
+SARVAM_TTS_SPEAKER = "shubh"
+GNANI_TTS_MODEL = "vachana-voice-v3"
+GNANI_TTS_VOICE = "Pranav"
+# Both TTS providers can synthesize straight to 8kHz, so their audio needs no resampling
+# before mu-law encoding — unlike Cartesia/OpenAI, which only emit 24kHz.
+TELEPHONY_RATE = 8000
 
 _client = httpx.AsyncClient(
     base_url="https://openrouter.ai/api/v1",
@@ -66,6 +81,20 @@ _openai = httpx.AsyncClient(
     timeout=45,
 )
 
+_sarvam = httpx.AsyncClient(
+    base_url="https://api.sarvam.ai",
+    headers={"api-subscription-key": os.environ.get("SARVAM_API_KEY", "")},
+    timeout=45,
+)
+
+# Gnani's speech APIs are served under their Vachana product domain (the GNANI_API_KEY
+# is a Vachana key — hence the vach* prefix), not under gnani.ai.
+_gnani = httpx.AsyncClient(
+    base_url="https://api.vachana.ai",
+    headers={"X-API-Key-ID": os.environ.get("GNANI_API_KEY", "")},
+    timeout=45,
+)
+
 
 async def _retry(fn, attempts: int = 3):
     """Retries on failure. A 429 (rate limit) waits with backoff before retrying, since an
@@ -91,9 +120,24 @@ async def _retry(fn, attempts: int = 3):
 async def transcribe(wav: bytes) -> dict:
     """Returns {"text": str, "seconds": float|None, "cost": float|None}. Dispatches on
     the settings STT provider; the default path is the pre-settings code unchanged."""
-    if settings.stt_provider() == "deepgram-nova":
+    provider = settings.stt_provider()
+    if provider == "deepgram-nova":
         return await _transcribe_deepgram(wav)
+    if provider == "sarvam-saaras":
+        return await _transcribe_sarvam(wav)
+    if provider == "gnani-vachana":
+        return await _transcribe_gnani(wav)
     return await _transcribe_openrouter(wav)
+
+
+def _wav_seconds(wav: bytes) -> float | None:
+    """Duration of a WAV we built ourselves. Used for providers that don't report one:
+    the utterance length is known locally, so usage stays populated instead of blank."""
+    try:
+        with wave.open(io.BytesIO(wav)) as w:
+            return w.getnframes() / float(w.getframerate())
+    except Exception:
+        return None
 
 
 async def _transcribe_openrouter(wav: bytes) -> dict:
@@ -136,6 +180,48 @@ async def _transcribe_deepgram(wav: bytes) -> dict:
         return {
             "text": data["results"]["channels"][0]["alternatives"][0]["transcript"].strip(),
             "seconds": data.get("metadata", {}).get("duration"),
+            "cost": None,
+        }
+
+    return await _retry(go)
+
+
+async def _transcribe_sarvam(wav: bytes) -> dict:
+    """Sarvam Saaras v3. Sync REST caps an utterance at 30s; longer audio is rejected
+    rather than truncated, so that surfaces as a failed turn, not a silently clipped
+    answer. cost=None: Sarvam bills per-minute off-request (see docs/backlog.md)."""
+
+    async def go():
+        r = await _sarvam.post(
+            "/speech-to-text",
+            data={"model": SARVAM_STT_MODEL, "language_code": INDIAN_ENGLISH, "mode": "transcribe"},
+            files={"file": ("utterance.wav", wav, "audio/wav")},
+        )
+        r.raise_for_status()
+        return {
+            "text": (r.json().get("transcript") or "").strip(),
+            "seconds": _wav_seconds(wav),
+            "cost": None,
+        }
+
+    return await _retry(go)
+
+
+async def _transcribe_gnani(wav: bytes) -> dict:
+    """Gnani Vachana v3, in its ITN mode. Returns lowercase and unpunctuated ("i have five
+    years..."), unlike every other adapter here; harmless because classify_utterance and
+    ends_midthought both case-fold and strip punctuation before matching."""
+
+    async def go():
+        r = await _gnani.post(
+            "/stt/v3",
+            data={"language_code": INDIAN_ENGLISH, "format": "transcribe"},
+            files={"audio_file": ("utterance.wav", wav, "audio/wav")},
+        )
+        r.raise_for_status()
+        return {
+            "text": (r.json().get("transcript") or "").strip(),
+            "seconds": _wav_seconds(wav),
             "cost": None,
         }
 
@@ -195,9 +281,25 @@ def _parse_json(content: str) -> dict:
 async def speak(text: str) -> bytes:
     """Text -> 8kHz mu-law bytes ready for a Twilio media stream. Dispatches on the
     settings TTS provider; the default path is the pre-settings Cartesia code unchanged."""
-    if settings.tts_provider() == "openai-tts":
+    provider = settings.tts_provider()
+    if provider == "openai-tts":
         return await _speak_openai(text)
+    if provider == "sarvam-bulbul":
+        return await _speak_sarvam(text)
+    if provider == "gnani-vachana":
+        return await _speak_gnani(text)
     return await _speak_cartesia(text)
+
+
+def _wav_to_ulaw(wav: bytes) -> bytes:
+    """WAV bytes -> 8kHz mu-law. Both Sarvam and Gnani are asked to synthesize at 8kHz
+    directly, but the rate is read back from the header rather than assumed: a provider
+    that quietly ignores the request would otherwise emit chipmunk audio down the line."""
+    with wave.open(io.BytesIO(wav)) as w:
+        rate, pcm = w.getframerate(), w.readframes(w.getnframes())
+    if rate != TELEPHONY_RATE:
+        pcm = resample(pcm, rate, TELEPHONY_RATE)
+    return pcm_to_ulaw(pcm)
 
 
 async def _speak_cartesia(text: str) -> bytes:
@@ -238,6 +340,53 @@ async def _speak_openai(text: str) -> bytes:
 
     pcm = await _retry(go)
     return pcm_to_ulaw(resample(pcm, OPENAI_PCM_RATE, 8000))
+
+
+async def _speak_sarvam(text: str) -> bytes:
+    """Sarvam Bulbul v3. Returns base64-encoded audio in JSON (not raw bytes like the
+    other TTS providers), split across an `audios` list when the text is long enough to
+    be sentence-split — the chunks concatenate into one WAV stream."""
+
+    async def go():
+        r = await _sarvam.post(
+            "/text-to-speech",
+            json={
+                "text": text,
+                "model": SARVAM_TTS_MODEL,
+                "speaker": SARVAM_TTS_SPEAKER,
+                "target_language_code": INDIAN_ENGLISH,
+                "speech_sample_rate": TELEPHONY_RATE,
+                "output_audio_codec": "wav",
+            },
+        )
+        r.raise_for_status()
+        return r.json().get("audios") or []
+
+    chunks = await _retry(go)
+    return b"".join(_wav_to_ulaw(base64.b64decode(c)) for c in chunks)
+
+
+async def _speak_gnani(text: str) -> bytes:
+    async def go():
+        r = await _gnani.post(
+            "/api/v1/tts/inference",
+            json={
+                "text": text,
+                "model": GNANI_TTS_MODEL,
+                "voice": GNANI_TTS_VOICE,
+                "audio_config": {
+                    "sample_rate": TELEPHONY_RATE,
+                    "num_channels": 1,
+                    "sample_width": 2,
+                    "encoding": "linear_pcm",
+                    "container": "wav",
+                },
+            },
+        )
+        r.raise_for_status()
+        return r.content
+
+    return _wav_to_ulaw(await _retry(go))
 
 
 JD_PARSE_SYSTEM_PROMPT = """You review a piece of text and decide whether it is a job description

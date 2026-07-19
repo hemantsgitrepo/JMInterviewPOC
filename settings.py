@@ -27,10 +27,14 @@ SETTINGS_PATH = os.environ.get("SETTINGS_PATH", "settings.json")
 VETTED_STT_PROVIDERS = [
     {"id": "openrouter-whisper", "label": "Whisper large-v3 via OpenRouter (default)", "key_env": "OPENROUTER_API_KEY"},
     {"id": "deepgram-nova", "label": "Deepgram Nova 3 — telephony-tuned", "key_env": "DEEPGRAM_API_KEY"},
+    {"id": "sarvam-saaras", "label": "Sarvam Saaras v3 — Indian English/accents", "key_env": "SARVAM_API_KEY"},
+    {"id": "gnani-vachana", "label": "Gnani Vachana v3 — Indian English/accents", "key_env": "GNANI_API_KEY"},
 ]
 VETTED_TTS_PROVIDERS = [
     {"id": "cartesia-sonic", "label": "Cartesia Sonic 3.5 (default)", "key_env": "CARTESIA_API_KEY"},
     {"id": "openai-tts", "label": "OpenAI gpt-4o-mini-tts", "key_env": "OPENAI_API_KEY"},
+    {"id": "sarvam-bulbul", "label": "Sarvam Bulbul v3 — Indian English voices", "key_env": "SARVAM_API_KEY"},
+    {"id": "gnani-vachana", "label": "Gnani Vachana Voice v3 — Indian English voices", "key_env": "GNANI_API_KEY"},
 ]
 
 # Each entry verified live on OpenRouter: model exists and supports response_format

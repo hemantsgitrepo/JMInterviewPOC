@@ -1,6 +1,6 @@
 """Live STT/TTS provider-adapter checks (needs DEEPGRAM_API_KEY, OPENAI_API_KEY,
-CARTESIA_API_KEY, OPENROUTER_API_KEY in .env — skips a provider cleanly if its key
-is absent). Exercises the real models.transcribe()/speak() dispatchers with settings
+CARTESIA_API_KEY, OPENROUTER_API_KEY, SARVAM_API_KEY, GNANI_API_KEY in .env — skips a
+provider cleanly if its key is absent). Exercises the real models.transcribe()/speak() dispatchers with settings
 switched per provider, then restores defaults.
 
 Usage: python test_providers.py
@@ -47,7 +47,9 @@ async def check_pair(stt_id: str, tts_id: str) -> None:
 async def main():
     pairs = [
         ("openrouter-whisper", "cartesia-sonic"),  # default path
-        ("deepgram-nova", "openai-tts"),           # both new adapters
+        ("deepgram-nova", "openai-tts"),           # Phase 2 adapters
+        ("sarvam-saaras", "sarvam-bulbul"),        # Phase 4 adapters
+        ("gnani-vachana", "gnani-vachana"),
     ]
     for stt_id, tts_id in pairs:
         missing = [
